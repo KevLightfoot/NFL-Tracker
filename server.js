@@ -25,7 +25,7 @@ try {
 const PORT = parseInt(process.env.PORT, 10) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 const MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
-const APP_PASSWORD = process.env.APP_PASSWORD || ''; 
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || 'https://kevlightfoot.github.io';
 const ESPN = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl';
 const ESPN_ALT = 'https://site.web.api.espn.com/apis/site/v2/sports/football/nfl';
 const PUBLIC = path.join(__dirname, 'public');
@@ -312,8 +312,28 @@ function readBody(req, limit) {
   });
 }
 
+// Lightweight in-memory limits to reduce accidental/public API abuse. These reset on restart.
+const rateBuckets = new Map();
+function rateLimit(req, res, key, max, windowMs) {
+  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  const ip = forwarded || req.socket.remoteAddress || 'unknown';
+  const id = key + ':' + ip;
+  const now = Date.now();
+  let b = rateBuckets.get(id);
+  if (!b || now >= b.reset) b = { count: 0, reset: now + windowMs };
+  b.count += 1; rateBuckets.set(id, b);
+  if (b.count > max) {
+    res.setHeader('retry-after', String(Math.max(1, Math.ceil((b.reset - now) / 1000))));
+    send(res, 429, { error: 'Too many requests. Please wait a bit and try again.' });
+    return false;
+  }
+  return true;
+}
+
 async function handleApi(req, res, url) {
   const p = url.pathname;
+  if (p === '/api/parse' && req.method === 'POST' && !rateLimit(req, res, 'parse', 12, 60 * 60 * 1000)) return;
+  if (p === '/api/resolve' && req.method === 'POST' && !rateLimit(req, res, 'resolve', 120, 60 * 60 * 1000)) return;
   if (p === '/api/config' && req.method === 'GET') return send(res, 200, { hasServerKey: !!process.env.OPENAI_API_KEY, model: MODEL });
   if (p === '/api/games' && req.method === 'GET') return send(res, 200, { games: await getGames() });
   if (p.startsWith('/api/game/') && req.method === 'GET') return send(res, 200, { game: await getGame(p.slice('/api/game/'.length)) });
@@ -339,23 +359,21 @@ async function handleApi(req, res, url) {
 
 const server = http.createServer(async function (req, res) {
   try {
-    // Optional HTTP Basic Auth protects a public personal deployment and its paid API key.
+    const requestOrigin = req.headers.origin || '';
+    if (requestOrigin === ALLOWED_ORIGIN) {
+      res.setHeader('access-control-allow-origin', ALLOWED_ORIGIN);
+      res.setHeader('vary', 'Origin');
+      res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+      res.setHeader('access-control-allow-headers', 'content-type, x-api-key');
+    }
+    if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
     const requestPath = new URL(req.url, 'http://localhost').pathname;
     if (requestPath === '/healthz') { res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }); return res.end('ok'); }
-    if (APP_PASSWORD) {
-      const auth = req.headers.authorization || '';
-      const match = auth.match(/^Basic\s+(.+)$/i);
-      let supplied = '';
-      try { supplied = match ? Buffer.from(match[1], 'base64').toString('utf8').split(':').slice(1).join(':') : ''; } catch (e) { supplied = ''; }
-      const a = Buffer.from(supplied), b = Buffer.from(APP_PASSWORD);
-      const crypto = require('crypto');
-      if (!match || a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-        res.writeHead(401, { 'WWW-Authenticate': 'Basic realm=\"Parlay Tracker\", charset=\"UTF-8\"', 'Cache-Control': 'no-store' });
-        return res.end('Password required');
-      }
-    }
     const url = new URL(req.url, 'http://localhost');
-    if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
+    if (url.pathname.startsWith('/api/')) {
+      if (requestOrigin && requestOrigin !== ALLOWED_ORIGIN) return send(res, 403, { error: 'Origin not allowed' });
+      return await handleApi(req, res, url);
+    }
     let rel = decodeURIComponent(url.pathname);
     if (rel === '/') rel = '/index.html';
     const file = path.normalize(path.join(PUBLIC, rel));
@@ -374,7 +392,7 @@ if (require.main === module) {
   server.listen(PORT, HOST, function () {
     console.log('\n  Parlay Tracker running →  http://localhost:' + PORT);
     console.log('  Model: ' + MODEL + '   OpenAI API key: ' + (process.env.OPENAI_API_KEY ? 'found in environment/.env' : 'NOT SET (paste one in Settings or add it to .env)'));
-    console.log('  Access password: ' + (APP_PASSWORD ? 'enabled' : 'disabled (set APP_PASSWORD when publicly hosted)') + '\n');
+    console.log('  CORS origin: ' + ALLOWED_ORIGIN + '\n');
   });
 }
 

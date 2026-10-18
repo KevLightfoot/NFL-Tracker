@@ -7,12 +7,19 @@
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; });
   };
   const LS_BETS = 'parlay-tracker.v1', LS_KEY = 'parlay-tracker.apiKey';
+  // GitHub Pages frontend talks to the Render API. Keep this URL public; never put API keys here.
+  const API_BASE = 'https://nfl-parlay-tracker.onrender.com';
   const S = { parlays: [], games: {}, gamesList: [], expanded: new Set(), pending: [], config: {}, timer: null, demoTimer: null, lastUpdate: null, busy: false, again: false, fetchError: null, serverDown: false };
 
   /* ---------------- storage ---------------- */
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } }
-  function load() { try { S.parlays = JSON.parse(lsGet(LS_BETS) || '[]'); } catch (e) { S.parlays = []; } }
+  function load() {
+    try { S.parlays = JSON.parse(lsGet(LS_BETS) || '[]'); } catch (e) { S.parlays = []; }
+    // Remove any old simulated demo parlay from this browser's saved state.
+    S.parlays = S.parlays.filter(function (p) { return !p.demo; });
+    save();
+  }
   function save() { lsSet(LS_BETS, JSON.stringify(S.parlays)); }
   const uid = function () { return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-3); };
 
@@ -23,12 +30,35 @@
   }
 
   /* ---------------- api ---------------- */
+  let wakePromise = null;
+  async function wakeBackend() {
+    if (wakePromise) return wakePromise;
+    wakePromise = (async function () {
+      const deadline = Date.now() + 90000;
+      while (Date.now() < deadline) {
+        try {
+          const r = await fetch(API_BASE + '/healthz', { cache: 'no-store' });
+          if (r.ok) return;
+        } catch (e) { /* Render may still be waking */ }
+        await new Promise(function (resolve) { setTimeout(resolve, 4000); });
+      }
+      throw new Error('Backend is still waking up. Please try again in a moment.');
+    })();
+    try { return await wakePromise; } finally { wakePromise = null; }
+  }
   async function api(path, opts) {
     opts = opts || {};
     const headers = Object.assign({ 'content-type': 'application/json' }, opts.headers || {});
     const key = lsGet(LS_KEY);
     if (key) headers['x-api-key'] = key;
-    const res = await fetch(path, Object.assign({}, opts, { headers: headers }));
+    let res;
+    try {
+      res = await fetch(API_BASE + path, Object.assign({}, opts, { headers: headers }));
+    } catch (e) {
+      toast('Waking live data service… this can take up to a minute on the free host.');
+      await wakeBackend();
+      res = await fetch(API_BASE + path, Object.assign({}, opts, { headers: headers }));
+    }
     let j = {};
     try { j = await res.json(); } catch (e) { /* non-json */ }
     if (!res.ok) throw new Error(j.error || ('Server error ' + res.status));
@@ -460,15 +490,6 @@
 
     $('#btnRefresh').addEventListener('click', function () { refreshAll(); });
     $('#btnSettings').addEventListener('click', function () { $('#setKey').value = lsGet(LS_KEY) || ''; $('#dlgSettings').returnValue = ''; $('#dlgSettings').showModal(); });
-    $('#btnDemo').addEventListener('click', function () {
-      S.parlays = S.parlays.filter(function (p) { return !p.demo; });
-      Demo.reset();
-      const p = Demo.parlay();
-      p.id = uid(); p.createdAt = Date.now();
-      p.legs.forEach(function (l) { l.id = uid(); });
-      S.parlays.unshift(p); save(); render(); refreshAll(); startDemoClock();
-      toast('Demo loaded — simulated games are advancing live.');
-    });
     document.addEventListener('visibilitychange', function () { if (!document.hidden && S.parlays.length) refreshAll(); });
 
     wireDialogs();

@@ -11,5 +11,5 @@ services:
         sync: false
       - key: OPENAI_MODEL
         value: gpt-4.1-mini
-      - key: APP_PASSWORD
-        sync: false
+      - key: ALLOWED_ORIGIN
+        value: https://kevlightfoot.github.io

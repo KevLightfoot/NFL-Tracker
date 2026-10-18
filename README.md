@@ -6,7 +6,6 @@ Upload sportsbook screenshots and track individual NFL bet legs against ESPN sco
 - Supports moneylines, spreads, totals, player props, TD markets, and more.
 - Tracks multiple bets, with editable legs and manual corrections.
 - ESPN scoreboard and box scores refresh during games.
-- Demo mode works without an API key.
 
 ## Run locally (Node 18+)
 
@@ -18,7 +17,7 @@ No `npm install` is required. Windows: double-click `start.bat`.
 
 ## Public hosting
 
-Set `OPENAI_API_KEY`, `OPENAI_MODEL` (optional), and a strong `APP_PASSWORD` in your host's environment settings. The password protects the public app and prevents strangers from using your API key. Keep `.env` out of source control.
+Set `OPENAI_API_KEY` and optionally `OPENAI_MODEL` in Render environment settings. The public frontend is intended for GitHub Pages at `https://kevlightfoot.github.io/NFL-Tracker/`, with the API on Render. `ALLOWED_ORIGIN` defaults to `https://kevlightfoot.github.io`. Keep `.env` out of source control. The public API has lightweight per-IP limits, but these are not a substitute for robust paid-API abuse protection; monitor OpenAI usage and set billing limits.
 
 Render can host this as a Node web service with build command `npm test` and start command `npm start`. Set the host to use its provided `PORT`; the server binds to `0.0.0.0` automatically on Render. Free services can sleep when idle, and local files are ephemeral, so use this as a personal test deployment rather than a production service.
 
