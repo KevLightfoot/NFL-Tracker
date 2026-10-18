@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0f17">
+  <title>Parlay Tracker</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2322c55e'/%3E%3Cpath d='M8 17l5 5 11-12' fill='none' stroke='%230b0f17' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">✓</span>
+      <div>
+        <h1>Parlay Tracker</h1>
+        <p class="tag">Drop a bet slip. Watch every leg.</p>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn ghost" id="btnRefresh" title="Refresh live scores"><span class="spin-ico">↻</span><span class="hide-sm"> Refresh</span></button>
+      <button class="btn ghost" id="btnDemo" title="Load a demo parlay with simulated live games">Demo</button>
+      <button class="btn ghost" id="btnSettings" title="Settings">⚙<span class="hide-sm"> Settings</span></button>
+    </div>
+  </header>
+
+  <main>
+    <div id="banner" class="banner" hidden></div>
+
+    <section id="drop" class="drop" tabindex="0" role="button" aria-label="Upload a bet slip screenshot">
+      <input id="file" type="file" accept="image/*" multiple hidden>
+      <div class="drop-ico">⬆</div>
+      <div class="drop-main">Upload a bet slip screenshot</div>
+      <div class="drop-sub">Tap to choose, drag &amp; drop, or paste (Ctrl/⌘ + V). Any sportsbook, any layout.</div>
+      <label class="combine" id="combineWrap" hidden><input type="checkbox" id="combine"> Treat selected images as <b>one</b> slip (scrolled screenshots)</label>
+    </section>
+
+    <section id="pending" class="pending-list"></section>
+    <section id="parlays" class="parlays"></section>
+
+    <p id="empty" class="empty" hidden>No bets yet. Upload a screenshot above — or hit <b>Demo</b> to see it in action.</p>
+    <p class="foot">Live scores &amp; box scores from ESPN. Props use official box-score stats; fantasy-point scoring varies by book, so double-check those legs. Not affiliated with any sportsbook.</p>
+  </main>
+
+  <dialog id="dlgSettings">
+    <form method="dialog" class="dlg">
+      <h2>Settings</h2>
+      <label>OpenAI API key
+        <input type="password" id="setKey" placeholder="sk-… (stored only in this browser)" autocomplete="off">
+      </label>
+      <p class="hint">Used to read screenshots. You can instead put <code>OPENAI_API_KEY</code> in the server environment and leave this blank.</p>
+      <div class="row">
+        <button class="btn danger" value="clear" id="btnClearAll" type="button">Delete all bets</button>
+        <span class="grow"></span>
+        <button class="btn ghost" value="cancel">Cancel</button>
+        <button class="btn primary" value="save" id="btnSaveSettings">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlgBet">
+    <form method="dialog" class="dlg" id="formBet">
+      <h2>Edit bet</h2>
+      <label>Name <input id="bName" placeholder="e.g. Sunday 5-leggers"></label>
+      <div class="grid3">
+        <label>Wager ($) <input id="bWager" inputmode="decimal"></label>
+        <label>Payout ($) <input id="bPayout" inputmode="decimal"></label>
+        <label>Odds <input id="bOdds" placeholder="+1125"></label>
+      </div>
+      <label>Sportsbook <input id="bBook"></label>
+      <div class="row">
+        <button class="btn danger" type="button" id="btnDeleteBet">Delete bet</button>
+        <span class="grow"></span>
+        <button class="btn ghost" value="cancel">Cancel</button>
+        <button class="btn primary" value="save">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlgLeg">
+    <form method="dialog" class="dlg" id="formLeg">
+      <h2>Edit leg</h2>
+      <p class="hint" id="legRaw"></p>
+      <div class="grid2">
+        <label>Market
+          <select id="lMarket">
+            <option value="moneyline">Moneyline</option>
+            <option value="spread">Spread</option>
+            <option value="total">Game total (O/U)</option>
+            <option value="team_total">Team total</option>
+            <option value="player_prop">Player prop</option>
+            <option value="anytime_td">Anytime TD</option>
+            <option value="first_td">First TD</option>
+            <option value="last_td">Last TD</option>
+            <option value="other">Other (manual)</option>
+          </select>
+        </label>
+        <label>Period
+          <select id="lPeriod">
+            <option value="full">Full game</option><option value="1h">1st half</option><option value="2h">2nd half</option>
+            <option value="q1">1st quarter</option><option value="q2">2nd quarter</option><option value="q3">3rd quarter</option><option value="q4">4th quarter</option>
+          </select>
+        </label>
+      </div>
+      <div class="grid2">
+        <label>Team <input id="lTeam" placeholder="e.g. Jets"></label>
+        <label>Player <input id="lPlayer" placeholder="e.g. Derrick Henry"></label>
+      </div>
+      <label>Stat <select id="lStat"></select></label>
+      <div class="grid2">
+        <label>Side
+          <select id="lSide"><option value="">—</option><option value="over">Over</option><option value="under">Under</option><option value="yes">Yes</option></select>
+        </label>
+        <label>Line <input id="lLine" inputmode="decimal" placeholder="79.5 / -3 / +7.5"></label>
+      </div>
+      <label>Game <select id="lGame"><option value="auto">Auto-detect</option></select></label>
+      <div class="row">
+        <button class="btn danger" type="button" id="btnDeleteLeg">Remove leg</button>
+        <span class="grow"></span>
+        <button class="btn ghost" value="cancel">Cancel</button>
+        <button class="btn primary" value="save">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="lib/teams.js"></script>
+  <script src="lib/stats.js"></script>
+  <script src="lib/evaluate.js"></script>
+  <script src="demo.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

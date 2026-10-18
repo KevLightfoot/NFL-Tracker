@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: nfl-parlay-tracker
+    runtime: node
+    plan: free
+    buildCommand: npm test
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4.1-mini
+      - key: APP_PASSWORD
+        sync: false
