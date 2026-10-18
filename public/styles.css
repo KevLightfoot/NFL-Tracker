@@ -172,3 +172,33 @@ code { background: #0e1520; padding: 1px 5px; border-radius: 5px; font-size: 12p
   .grid3 { grid-template-columns: 1fr 1fr; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* Small live score beside player prop game status */
+.prop-score {
+  display: inline-block;
+  margin-left: 6px;
+  color: var(--text);
+  opacity: .82;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.photo-btn {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+}
+.drop[contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+.drop[contenteditable="true"] img {
+  max-width: 100%;
+  max-height: 180px;
+  object-fit: contain;
+}
+.pf .btns { flex-wrap: wrap; justify-content: flex-end; }
+@media (max-width: 520px) {
+  .pf { align-items: flex-start; }
+  .pf .btns { flex-wrap: wrap; }
+}

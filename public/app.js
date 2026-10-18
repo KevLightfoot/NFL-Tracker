@@ -152,7 +152,11 @@
       '<div class="badge"><span>' + BADGE[r.state] + '</span></div>' +
       '<div class="body"><div class="l-top"><span class="l-title">' + esc(r.title) + '</span><span class="odds">' + esc(leg.odds) + '</span></div>' +
       mid +
-      '<div class="l-sub"><span class="detail">' + esc(r.detail) + '</span><span class="game">' + esc(r.kind === 'score' ? (r.gameText.split(' · ')[1] || '') : r.gameText) + '</span></div>' +
+      '<div class="l-sub"><span class="detail">' + esc(r.detail) + '</span><span class="game">' +
+      esc(r.kind === 'score' ? (r.gameText.split(' · ')[1] || '') : r.gameText) +
+      ((['player_prop', 'anytime_td', 'first_td', 'last_td'].indexOf(leg.market) >= 0 && S.games[leg.gameId] && S.games[leg.gameId].away && S.games[leg.gameId].home) ?
+        ' <small class="prop-score">' + esc(S.games[leg.gameId].away.abbr + ' ' + S.games[leg.gameId].away.score + '–' + S.games[leg.gameId].home.abbr + ' ' + S.games[leg.gameId].home.score) + '</small>' : '') +
+      '</span></div>' +
       more + '</div></li>';
   }
 
@@ -170,7 +174,7 @@
       '<div class="money"><div><label>WAGER</label><b>' + money(p.wager) + '</b></div><div class="payout"><label>PAYOUT</label><b>' + money(p.payout) + '</b></div><div><label>ODDS</label><b>' + esc(p.odds || '—') + '</b></div></div>' +
       '<div class="segs">' + segs + '</div>' + warns + '</div>' +
       '<ul class="legs">' + p.legs.map(function (l, i) { return legHTML(p, l, results[i]); }).join('') + '</ul>' +
-      '<div class="pf"><span>' + esc(upd) + '</span><span class="btns"><button class="btn small" data-act="edit-bet" data-p="' + p.id + '">Edit bet</button></span></div></article>';
+      '<div class="pf"><span>' + esc(upd) + '</span><span class="btns"><button class="btn small" data-act="edit-bet" data-p="' + p.id + '">Edit bet</button><button class="btn small danger" data-act="clear-slip" data-p="' + p.id + '">Clear slip</button></span></div></article>';
   }
 
   function render() {
@@ -353,6 +357,16 @@
     const f = findLeg(pid, lid), p = f.p, l = f.l;
     if (!p) return;
     if (name === 'edit-bet') return openBetDialog(p);
+    if (name === 'clear-slip') {
+      if (!confirm('Clear this slip? This cannot be undone.')) return;
+      S.parlays = S.parlays.filter(function (x) { return x.id !== p.id; });
+      p.legs.forEach(function (leg) { S.expanded.delete(leg.id); });
+      save(); render(); renderPending();
+      if (S.parlays.length) refreshAll();
+      else { S.games = {}; clearTimeout(S.timer); clearInterval(S.demoTimer); }
+      toast('Slip cleared.');
+      return;
+    }
     if (!l) return;
     if (name === 'edit-leg') return openLegDialog(p, l);
     if (name === 'mark-hit') { l.manual = { state: 'hit' }; }
@@ -455,8 +469,21 @@
   function init() {
     load();
     const drop = $('#drop'), file = $('#file');
-    drop.addEventListener('click', function () { file.click(); });
-    drop.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); file.click(); } });
+    // Keep desktop click-to-upload, but on touch devices let the box act as a paste target.
+    drop.addEventListener('click', function (e) {
+      if (e.target.closest('#combineWrap')) return;
+      drop.focus();
+      if (!window.matchMedia('(pointer: coarse)').matches) file.click();
+    });
+    drop.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        if (window.matchMedia('(pointer: coarse)').matches) drop.focus();
+        else file.click();
+      }
+    });
+    const choosePhoto = $('#choosePhoto');
+    if (choosePhoto) choosePhoto.addEventListener('click', function () { file.click(); });
     $('#combineWrap').hidden = false;
     $('#combineWrap').addEventListener('click', function (e) { e.stopPropagation(); });
     file.addEventListener('change', function () { handleFiles(file.files); file.value = ''; });

@@ -26,13 +26,14 @@
   <main>
     <div id="banner" class="banner" hidden></div>
 
-    <section id="drop" class="drop" tabindex="0" role="button" aria-label="Upload a bet slip screenshot">
+    <section id="drop" class="drop" tabindex="0" role="button" aria-label="Paste or upload a bet slip screenshot" contenteditable="true" spellcheck="false">
       <input id="file" type="file" accept="image/*" multiple hidden>
-      <div class="drop-ico">⬆</div>
-      <div class="drop-main">Upload a bet slip screenshot</div>
-      <div class="drop-sub">Tap to choose, drag &amp; drop, or paste (Ctrl/⌘ + V). Any sportsbook, any layout.</div>
-      <label class="combine" id="combineWrap" hidden><input type="checkbox" id="combine"> Treat selected images as <b>one</b> slip (scrolled screenshots)</label>
+      <div class="drop-ico" contenteditable="false">📋</div>
+      <div class="drop-main" contenteditable="false">Paste a bet slip screenshot here</div>
+      <div class="drop-sub" contenteditable="false">Desktop: Ctrl/⌘ + V or drag an image. iPhone: tap and hold here and choose Paste when available.</div>
+      <label class="combine" id="combineWrap" hidden contenteditable="false"><input type="checkbox" id="combine"> Treat selected images as <b>one</b> slip (scrolled screenshots)</label>
     </section>
+    <button class="btn photo-btn" type="button" id="choosePhoto">Choose screenshot from Photos</button>
 
     <section id="pending" class="pending-list"></section>
     <section id="parlays" class="parlays"></section>
