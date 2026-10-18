@@ -258,7 +258,13 @@ test('server: config, static files, traversal guard, parse, games, game, resolve
   const req = function (method, p, body, headers) {
     return new Promise(function (resolve, reject) {
       const data = body ? JSON.stringify(body) : null;
-      const rq = http.request({ host: '127.0.0.1', port: port, path: p, method: method, headers: Object.assign({ 'content-type': 'application/json' }, headers || {}) }, function (res) {
+      const rq = http.request({ host: '127.0.0.1', port: port, path: p, method: method, headers: Object.assign(
+  { 'content-type': 'application/json' },
+  process.env.APP_PASSWORD
+    ? { authorization: 'Basic ' + Buffer.from('test:' + process.env.APP_PASSWORD).toString('base64') }
+    : {},
+  headers || {}
+) }, function (res) {
         let s = ''; res.on('data', function (c) { s += c; }); res.on('end', function () { let j = null; try { j = JSON.parse(s); } catch (e) { /* html */ } resolve({ status: res.statusCode, body: s, json: j, headers: res.headers }); });
       });
       rq.on('error', reject); if (data) rq.write(data); rq.end();
