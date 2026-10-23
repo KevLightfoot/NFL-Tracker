@@ -32,21 +32,22 @@
   function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
   function sideWord(side) { return side === 'under' ? 'Under' : side === 'yes' ? '' : 'Over'; }
 
-  function teamLabel(t) {
-    const a = Teams.matchTeam(t);
-    return a ? Teams.name(a) : (t || '');
+  function teamLabel(t, league) {
+    const a = Teams.matchTeam(t, league);
+    return a ? Teams.name(a, league) : (t || '');
   }
 
   function describeLeg(leg) {
+    const lg = leg.league || undefined;
     const per = PERIOD_LABEL[leg.period || 'full'] || '';
     switch (leg.market) {
-      case 'moneyline': return per + teamLabel(leg.team) + ' ML';
-      case 'spread': return per + teamLabel(leg.team) + ' ' + (leg.line != null ? signed(leg.line) : '');
+      case 'moneyline': return per + teamLabel(leg.team, lg) + ' ML';
+      case 'spread': return per + teamLabel(leg.team, lg) + ' ' + (leg.line != null ? signed(leg.line) : '');
       case 'total': {
-        const m = leg.away_team && leg.home_team ? teamLabel(leg.away_team) + ' @ ' + teamLabel(leg.home_team) + ' ' : '';
+        const m = leg.away_team && leg.home_team ? teamLabel(leg.away_team, lg) + ' @ ' + teamLabel(leg.home_team, lg) + ' ' : '';
         return m + per + sideWord(leg.side) + ' ' + fmt(leg.line);
       }
-      case 'team_total': return teamLabel(leg.team) + ' ' + per + 'Team Total ' + sideWord(leg.side) + ' ' + fmt(leg.line);
+      case 'team_total': return teamLabel(leg.team, lg) + ' ' + per + 'Team Total ' + sideWord(leg.side) + ' ' + fmt(leg.line);
       case 'anytime_td': return leg.player + ' Anytime TD';
       case 'first_td': return leg.player + ' First TD';
       case 'last_td': return leg.player + ' Last TD';
@@ -135,6 +136,7 @@
   }
 
   function evaluateLeg(leg, game) {
+    if (game) Teams.registerGame(game); // college teams register themselves from game data
     const r = blank(leg, game);
     compute(leg, game, r);
     if (leg.manual && leg.manual.state) {
@@ -148,6 +150,7 @@
 
   function compute(leg, g, r) {
     const market = leg.market;
+    const lg = (g && g.league) || leg.league || undefined; // 'nfl' | 'cfb' | undefined
     const manualVal = leg.manualValue != null && leg.manualValue !== '' ? Number(leg.manualValue) : null;
 
     // markets that need a game
@@ -159,7 +162,7 @@
     }
 
     if (market === 'moneyline' || market === 'spread') {
-      const abbr = Teams.matchTeam(leg.team);
+      const abbr = Teams.matchTeam(leg.team, lg);
       if (!abbr || (abbr !== g.away.abbr && abbr !== g.home.abbr)) { r.detail = 'Team not found in this game — edit the leg'; return; }
       const sc = scopedScore(g, leg.period);
       const mine = abbr === g.away.abbr ? sc.away : sc.home;
@@ -171,7 +174,7 @@
         if (!sc.started) { r.state = 'pending'; r.detail = ''; return; }
         if (sc.final) { r.state = diff > 0 ? 'hit' : diff < 0 ? 'miss' : 'push'; r.onTrack = diff > 0; r.detail = diff > 0 ? 'Won by ' + fmt(diff) : diff < 0 ? 'Lost by ' + fmt(-diff) : 'Tied'; return; }
         r.state = 'live'; r.onTrack = diff > 0 ? true : diff < 0 ? false : null;
-        r.detail = diff > 0 ? Teams.name(abbr) + ' leading by ' + fmt(diff) : diff < 0 ? Teams.name(abbr) + ' trailing by ' + fmt(-diff) : 'Tied';
+        r.detail = diff > 0 ? Teams.name(abbr, lg) + ' leading by ' + fmt(diff) : diff < 0 ? Teams.name(abbr, lg) + ' trailing by ' + fmt(-diff) : 'Tied';
       } else {
         const line = Number(leg.line) || 0;
         const cover = diff + line;
@@ -187,7 +190,7 @@
       const sc = scopedScore(g, leg.period);
       let total = sc.away + sc.home;
       if (market === 'team_total') {
-        const abbr = Teams.matchTeam(leg.team);
+        const abbr = Teams.matchTeam(leg.team, lg);
         if (!abbr || (abbr !== g.away.abbr && abbr !== g.home.abbr)) { r.detail = 'Team not found in this game — edit the leg'; return; }
         total = abbr === g.away.abbr ? sc.away : sc.home;
       }
@@ -196,7 +199,7 @@
       r.current = total; r.target = line;
       r.valueText = fmt(total); r.targetText = fmt(line);
       r.progress = line > 0 ? Math.min(1, total / line) : 0;
-      r.scoreText = (market === 'team_total' ? Teams.name(Teams.matchTeam(leg.team)) + ' ' : 'Current total ') + fmt(total);
+      r.scoreText = (market === 'team_total' ? Teams.name(Teams.matchTeam(leg.team, lg), lg) + ' ' : 'Current total ') + fmt(total);
       resolveOU(r, leg.side, line, total, sc.final, sc.started);
       if (r.state === 'live' || r.state === 'pending') {
         if (leg.side === 'under') r.detail = 'Room for ' + fmt(Math.max(0, Math.ceil(line) - 1 - total)) + ' more pts';
@@ -244,7 +247,7 @@
 
       if (manualVal != null) { value = manualVal; r.source = 'manual'; r.detail = 'Value entered manually'; }
       else if (g) {
-        const res = Stats.statValue(g, leg.player, stat, { team: Teams.matchTeam(leg.team) || leg.teamResolved, fantasy: leg.fantasy_system });
+        const res = Stats.statValue(g, leg.player, stat, { team: Teams.matchTeam(leg.team, lg) || leg.teamResolved, fantasy: leg.fantasy_system });
         if (res.status === 'unsupported') {
           r.kind = 'bar'; r.state = 'unresolved'; r.target = line; r.targetText = fmt(line);
           r.detail = 'Live data isn’t available for this stat — tap to enter the value yourself';

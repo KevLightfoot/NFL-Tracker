@@ -7,6 +7,7 @@
   <title>Parlay Tracker</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2322c55e'/%3E%3Cpath d='M8 17l5 5 11-12' fill='none' stroke='%230b0f17' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="portfolio.css">
 </head>
 <body>
   <header class="top">
@@ -23,7 +24,12 @@
     </div>
   </header>
 
-  <main>
+  <nav class="tabs" id="tabs" aria-label="Sections">
+    <button type="button" class="on" data-view="tracker">Tracker</button>
+    <button type="button" data-view="portfolio">Portfolio</button>
+  </nav>
+
+  <main id="viewTracker">
     <div id="banner" class="banner" hidden></div>
 
     <section id="drop" class="drop" tabindex="0" role="button" aria-label="Paste or upload a bet slip screenshot" contenteditable="true" spellcheck="false">
@@ -41,6 +47,8 @@
     <p id="empty" class="empty" hidden>No bets yet. Upload a sportsbook screenshot above to get started.</p>
     <p class="foot">Live scores &amp; box scores from ESPN. Props use official box-score stats; fantasy-point scoring varies by book, so double-check those legs. Not affiliated with any sportsbook.</p>
   </main>
+
+  <main id="viewPortfolio" hidden></main>
 
   <dialog id="dlgSettings">
     <form method="dialog" class="dlg">
@@ -113,7 +121,12 @@
         </label>
         <label>Line <input id="lLine" inputmode="decimal" placeholder="79.5 / -3 / +7.5"></label>
       </div>
-      <label>Game <select id="lGame"><option value="auto">Auto-detect</option></select></label>
+      <div class="grid2">
+        <label>League
+          <select id="lLeague"><option value="">Auto</option><option value="nfl">NFL</option><option value="cfb">College football</option></select>
+        </label>
+        <label>Game <select id="lGame"><option value="auto">Auto-detect</option></select></label>
+      </div>
       <div class="row">
         <button class="btn danger" type="button" id="btnDeleteLeg">Remove leg</button>
         <span class="grow"></span>
@@ -127,6 +140,7 @@
   <script src="lib/stats.js"></script>
   <script src="lib/evaluate.js"></script>
   <script src="demo.js"></script>
+  <script src="portfolio.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

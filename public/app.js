@@ -66,9 +66,9 @@
     return j;
   }
 
-  async function fetchGame(id) {
+  async function fetchGame(id, league) {
     if (Demo.isDemoId(id)) return Demo.getGame(id);
-    const j = await api('/api/game/' + encodeURIComponent(id));
+    const j = await api('/api/game/' + encodeURIComponent(id) + (league ? '?league=' + league : ''));
     return j.game;
   }
 
@@ -81,8 +81,7 @@
   };
   const BET_LABEL = { parlay: 'Parlay', same_game_parlay: 'Same Game Parlay', single: 'Single', round_robin: 'Round Robin', teaser: 'Teaser', other: 'Bet' };
 
-  
-    /* Underdog/PrizePicks-style wording ("Higher 0.5 Anytime TD") often comes back as a generic prop with an
+  /* Underdog/PrizePicks-style wording ("Higher 0.5 Anytime TD") often comes back as a generic prop with an
      unknown stat. Re-map touchdown-scorer legs from the slip text so they always track. */
   function fixTdLeg(leg) {
     if (!leg || !leg.player || leg.manual) return leg;
@@ -97,12 +96,13 @@
     }
     return leg;
   }
-  
+
   /* ---------------- build parlays from parse output ---------------- */
   function normLeg(l) {
     const leg = {
       id: uid(), raw_text: l.raw_text || '', market: l.market || 'other', team: l.team || '', player: l.player || '', stat: l.stat || null,
       side: l.side || null, line: l.line == null ? null : Number(l.line), odds: l.odds || '', away_team: l.away_team || '', home_team: l.home_team || '',
+      league: l.league === 'nfl' || l.league === 'cfb' ? l.league : '',
       game_date: l.game_date || '', period: l.period || 'full', fantasy_system: l.fantasy_system || null, notes: l.notes || '',
       gameId: null, teamResolved: null, manual: null, manualValue: null,
     };
@@ -246,17 +246,17 @@
       S.parlays.forEach(function (p) { p.legs.forEach(function (l) { if (!l.gameId && !l.noResolve && l.market !== 'other') need.push(l); }); });
       if (need.length) {
         try {
-          const j = await api('/api/resolve', { method: 'POST', body: JSON.stringify({ legs: need.map(function (l) { return { id: l.id, market: l.market, team: l.team, player: l.player, away_team: l.away_team, home_team: l.home_team, game_date: l.game_date }; }) }) });
+          const j = await api('/api/resolve', { method: 'POST', body: JSON.stringify({ legs: need.map(function (l) { return { id: l.id, market: l.market, team: l.team, player: l.player, away_team: l.away_team, home_team: l.home_team, game_date: l.game_date, league: l.league || null }; }) }) });
           (j.results || []).forEach(function (r) {
             const l = need.find(function (x) { return x.id === r.id; });
-            if (l) { if (r.gameId) l.gameId = r.gameId; if (r.team) l.teamResolved = r.team; }
+            if (l) { if (r.gameId) l.gameId = r.gameId; if (r.team) l.teamResolved = r.team; if (r.league) l.league = r.league; }
           });
         } catch (e) { err = e.message; }
       }
-      const ids = [];
-      S.parlays.forEach(function (p) { p.legs.forEach(function (l) { if (l.gameId && ids.indexOf(l.gameId) < 0) ids.push(l.gameId); }); });
+      const ids = [], leagueOf = {};
+      S.parlays.forEach(function (p) { p.legs.forEach(function (l) { if (l.gameId && ids.indexOf(l.gameId) < 0) ids.push(l.gameId); if (l.gameId && l.league) leagueOf[l.gameId] = l.league; }); });
       await Promise.all(ids.map(async function (id) {
-        try { S.games[id] = await fetchGame(id); } catch (e) { err = e.message; }
+        try { S.games[id] = await fetchGame(id, leagueOf[id]); } catch (e) { err = e.message; }
       }));
       S.fetchError = err; S.serverDown = false;
       S.lastUpdate = Date.now();
@@ -377,13 +377,22 @@
     if (!p) return;
     if (name === 'edit-bet') return openBetDialog(p);
     if (name === 'clear-slip') {
-      if (!confirm('Clear this slip? This cannot be undone.')) return;
-      S.parlays = S.parlays.filter(function (x) { return x.id !== p.id; });
-      p.legs.forEach(function (leg) { S.expanded.delete(leg.id); });
-      save(); render(); renderPending();
-      if (S.parlays.length) refreshAll();
-      else { S.games = {}; clearTimeout(S.timer); clearInterval(S.demoTimer); }
-      toast('Slip cleared.');
+      const finish = function () {
+        S.parlays = S.parlays.filter(function (x) { return x.id !== p.id; });
+        p.legs.forEach(function (leg) { S.expanded.delete(leg.id); });
+        save(); render(); renderPending();
+        if (S.parlays.length) refreshAll();
+        else { S.games = {}; clearTimeout(S.timer); clearInterval(S.demoTimer); }
+        toast('Slip cleared.');
+      };
+      if (window.Portfolio) {
+        // Offer to log it in the portfolio as Placed / Won / Lost before clearing.
+        const results = resultsFor(p), sum = E.summarize(results);
+        Portfolio.promptSave({
+          parlay: p, status: sum.status,
+          legs: p.legs.map(function (l, i) { return { title: results[i].title, state: results[i].state, odds: l.odds || '' }; }),
+        }, finish);
+      } else if (confirm('Clear this slip? This cannot be undone.')) finish();
       return;
     }
     if (!l) return;
@@ -426,13 +435,19 @@
     $('#legRaw').textContent = l.raw_text ? 'From slip: “' + l.raw_text + '”' : '';
     $('#lMarket').value = l.market; $('#lPeriod').value = l.period || 'full'; $('#lTeam').value = l.team || ''; $('#lPlayer').value = l.player || '';
     $('#lStat').value = l.stat || ''; $('#lSide').value = l.side || ''; $('#lLine').value = l.line == null ? '' : l.line;
-    const gs = $('#lGame');
+    const gs = $('#lGame'), lgSel = $('#lLeague');
+    lgSel.value = l.league || '';
     function fillGames() {
-      gs.innerHTML = '<option value="auto">Auto-detect</option>' + S.gamesList.map(function (g) {
-        return '<option value="' + esc(g.id) + '">' + esc(g.away.abbr + ' @ ' + g.home.abbr + ' · ' + dateLabel(g.date)) + '</option>';
-      }).join('');
+      const want = lgSel.value, keep = gs.value;
+      const opts = function (list) { return list.map(function (g) { return '<option value="' + esc(g.id) + '">' + esc(g.away.abbr + ' @ ' + g.home.abbr + ' · ' + dateLabel(g.date)) + '</option>'; }).join(''); };
+      const nfl = S.gamesList.filter(function (g) { return g.league !== 'cfb'; }), cfb = S.gamesList.filter(function (g) { return g.league === 'cfb'; });
+      gs.innerHTML = '<option value="auto">Auto-detect</option>' +
+        (want !== 'cfb' && nfl.length ? '<optgroup label="NFL">' + opts(nfl) + '</optgroup>' : '') +
+        (want !== 'nfl' && cfb.length ? '<optgroup label="College football">' + opts(cfb) + '</optgroup>' : '');
       if (l.gameId && !Demo.isDemoId(l.gameId) && l.pinned) gs.value = l.gameId;
+      if (keep && gs.querySelector('option[value="' + keep + '"]')) gs.value = keep;
     }
+    lgSel.onchange = fillGames;
     fillGames();
     $('#dlgLeg').returnValue = ''; $('#dlgLeg').showModal();
     if (!S.gamesList.length && !Demo.isDemoId(l.gameId || '')) {
@@ -459,9 +474,11 @@
       l.market = $('#lMarket').value; l.period = $('#lPeriod').value; l.team = $('#lTeam').value.trim(); l.player = $('#lPlayer').value.trim();
       l.stat = $('#lStat').value || null; l.side = $('#lSide').value || null;
       const ln = $('#lLine').value.replace(/[−–]/g, '-').trim(); l.line = ln === '' ? null : num(ln);
-      const g = $('#lGame').value;
-      if (g !== 'auto') { l.gameId = g; l.pinned = true; l.noResolve = false; }
-      else if (!Demo.isDemoId(l.gameId || '')) { l.pinned = false; l.gameId = null; l.teamResolved = null; }
+      const g = $('#lGame').value, pickedLeague = $('#lLeague').value;
+      if (g !== 'auto') {
+        const pg = S.gamesList.find(function (x) { return x.id === g; });
+        l.gameId = g; l.pinned = true; l.noResolve = false; l.league = pg && pg.league ? pg.league : (pickedLeague || l.league || '');
+      } else if (!Demo.isDemoId(l.gameId || '')) { l.pinned = false; l.gameId = null; l.teamResolved = null; l.league = pickedLeague; }
       if (l.market === 'anytime_td') l.side = 'yes';
       save(); render(); refreshAll();
     });

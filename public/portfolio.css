@@ -1,0 +1,60 @@
+/* Portfolio tab — reuses the colour variables from styles.css */
+.tabs { display: flex; gap: 6px; max-width: 760px; margin: 0 auto; padding: 10px 16px 0; }
+.tabs button { flex: 1; border: 1px solid var(--line); background: var(--panel); color: var(--muted); font-weight: 700; padding: 10px; border-radius: 10px; cursor: pointer; }
+.tabs button.on { background: var(--panel2); color: var(--text); border-color: var(--green); box-shadow: 0 -2px 0 var(--green) inset; }
+main[hidden] { display: none; }
+
+.pos { color: #4ade80; } .neg { color: #f87171; } .risk { color: #fbbf24; }
+.pf-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.pf-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 10px 9px; min-width: 0; }
+.pf-card label { display: block; font-size: 10.5px; letter-spacing: .9px; color: var(--muted); font-weight: 700; text-transform: uppercase; }
+.pf-card b { display: block; font-size: 21px; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.pf-card .sub { font-size: 11.5px; color: #b6c2d4; margin-top: 3px; }
+.pf-card .sub2, .gt .sub2 { display: flex; flex-wrap: wrap; gap: 2px 8px; font-size: 11.5px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.pf-ytd { margin: 10px 2px 0; font-size: 12.5px; color: var(--muted); }
+.pf-ytd b { color: var(--text); }
+
+.pf-ctrl { display: grid; gap: 10px; margin: 14px 0 6px; }
+.segctl { display: flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.segctl button { flex: 1; padding: 8px; background: var(--panel); color: var(--muted); border: 0; font-weight: 700; cursor: pointer; }
+.segctl button + button { border-left: 1px solid var(--line); }
+.segctl button.on { background: var(--panel2); color: var(--text); }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 999px; padding: 6px 14px; font-weight: 700; font-size: 13px; cursor: pointer; }
+.chip.on { color: var(--text); background: var(--panel2); }
+.chip.st-won.on { border-color: var(--green); color: #4ade80; } .chip.st-lost.on { border-color: var(--red); color: #f87171; } .chip.st-placed.on { border-color: var(--amber); color: #fbbf24; }
+.pf-date { display: flex; gap: 8px; align-items: end; }
+.pf-date label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 600; }
+.pf-date input, .dlg input[type=date] { background: #0e1520; border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; color: var(--text); color-scheme: dark; font-size: 15px; }
+.pf-tools { display: flex; gap: 8px; }
+
+.pf-group { margin-top: 18px; }
+.pf-group > header { display: flex; justify-content: space-between; gap: 10px; align-items: flex-end; padding: 0 2px 8px; border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+.pf-group h3 { margin: 0; font-size: 15px; }
+.pf-group .sub, .pf-group .sub2 { color: var(--muted); font-size: 12px; }
+.gt { text-align: right; } .gt b { font-size: 18px; font-variant-numeric: tabular-nums; } .gt .sub2 { justify-content: flex-end; }
+
+.pfe { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 12px; margin-bottom: 10px; }
+.pfe.e-won { border-left: 3px solid var(--green); } .pfe.e-lost { border-left: 3px solid var(--red); } .pfe.e-placed { border-left: 3px solid var(--amber); }
+.pfe-top { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+.pfe-title { font-weight: 700; } .pfe-title small { display: block; color: var(--muted); font-weight: 500; font-size: 12px; }
+.pfe-money { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: baseline; margin-top: 8px; font-size: 13px; color: var(--muted); }
+.pfe-money b { color: var(--text); font-variant-numeric: tabular-nums; }
+.pfe-money .res { margin-left: auto; font-weight: 800; font-size: 16px; font-variant-numeric: tabular-nums; }
+.pfe-legs { margin-top: 8px; font-size: 13px; }
+.pfe-legs summary { cursor: pointer; color: var(--muted); }
+.pfe-legs ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; }
+.pfe-legs li { display: flex; gap: 8px; color: #b6c2d4; } .pfe-legs li i { font-style: normal; width: 14px; flex: none; text-align: center; font-weight: 800; }
+.pfe-legs li em { margin-left: auto; color: var(--muted); font-style: normal; }
+.pfe-legs .lg-hit i { color: #4ade80; } .pfe-legs .lg-miss i { color: #f87171; }
+.pfe-btns { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+.pfe-btns .st-won.on { background: rgba(34,197,94,.2); border-color: var(--green); color: #4ade80; }
+.pfe-btns .st-lost.on { background: rgba(239,68,68,.18); border-color: var(--red); color: #f87171; }
+.pfe-btns .st-placed.on { background: rgba(245,158,11,.16); border-color: var(--amber); color: #fbbf24; }
+
+.pf-choice { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.pf-choice .btn { padding: 12px 8px; font-weight: 800; }
+.pf-choice .btn.win { color: #4ade80; } .pf-choice .btn.lose { color: #f87171; }
+.pf-choice .btn.suggest { outline: 2px solid var(--blue); outline-offset: 1px; }
+.pf-err { color: #fca5a5; font-size: 13px; margin: 0; }
+@media (max-width: 520px) { .pf-card b { font-size: 17px; } .pf-card .sub { font-size: 10.5px; } .pfe-money .res { margin-left: 0; width: 100%; } }

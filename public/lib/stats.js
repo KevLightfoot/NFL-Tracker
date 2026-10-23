@@ -82,7 +82,8 @@
   }
 
   /* ---------- ESPN parsing ---------- */
-  function canonAbbr(a) { return Teams.matchTeam(a) || a || ''; }
+  // NFL abbreviations are normalised (WAS->WSH); college abbreviations are used exactly as ESPN sends them.
+  function canonAbbr(a, league) { return league === 'cfb' ? (a || '') : (Teams.matchTeam(a, 'nfl') || a || ''); }
 
   function parseStatLine(labels, stats) {
     const o = {};
@@ -100,13 +101,14 @@
     return o;
   }
 
-  function teamBlock(c) {
+  function teamBlock(c, league) {
     const t = c.team || {};
     const ls = (c.linescores || []).map(function (l) { return n(l.displayValue != null ? l.displayValue : l.value); });
     return {
       id: String(t.id == null ? '' : t.id),
-      abbr: canonAbbr(t.abbreviation),
+      abbr: canonAbbr(t.abbreviation, league),
       name: t.displayName || t.name || '',
+      short: t.shortDisplayName || '', nick: t.name || '', location: t.location || '',
       score: n(c.score != null && typeof c.score === 'object' ? c.score.displayValue : c.score),
       linescores: ls,
     };
@@ -125,36 +127,40 @@
   }
 
   /* scoreboard event -> game (no players) */
-  function normalizeEvent(ev) {
+  function normalizeEvent(ev, league) {
+    league = league === 'cfb' ? 'cfb' : 'nfl';
     const comp = (ev.competitions || [])[0] || {};
     const st = statusBlock(ev.status || comp.status);
-    const g = { id: String(ev.id), date: ev.date || comp.date || null, name: ev.shortName || ev.name || '', players: [], scoringPlays: [] };
+    const g = { id: String(ev.id), league: league, date: ev.date || comp.date || null, name: ev.shortName || ev.name || '', players: [], scoringPlays: [] };
     Object.assign(g, st);
-    (comp.competitors || []).forEach(function (c) { g[c.homeAway] = teamBlock(c); });
+    (comp.competitors || []).forEach(function (c) { g[c.homeAway] = teamBlock(c, league); });
+    Teams.registerGame(g);
     return g;
   }
 
   /* summary payload -> game with players + scoring plays */
-  function normalizeSummary(j, idHint) {
+  function normalizeSummary(j, idHint, league) {
+    league = league === 'cfb' ? 'cfb' : 'nfl';
     const hdr = j.header || {};
     const comp = (hdr.competitions || [])[0] || {};
     const st = statusBlock(comp.status);
-    const g = { id: String(hdr.id || idHint || ''), date: comp.date || null, name: '', players: [], scoringPlays: [] };
+    const g = { id: String(hdr.id || idHint || ''), league: league, date: comp.date || null, name: '', players: [], scoringPlays: [] };
     Object.assign(g, st);
     // lets the server backfill status from the scoreboard when the summary header omits it
     g.hasStatus = !!(comp.status && comp.status.type && comp.status.type.state);
     const byTeamId = {};
     (comp.competitors || []).forEach(function (c) {
-      const tb = teamBlock(c);
+      const tb = teamBlock(c, league);
       g[c.homeAway] = tb;
       byTeamId[tb.id] = tb.abbr;
     });
     if (g.away && g.home) g.name = g.away.abbr + ' @ ' + g.home.abbr;
+    Teams.registerGame(g);
 
     const idx = {};
     ((j.boxscore || {}).players || []).forEach(function (tb) {
       const t = tb.team || {};
-      const abbr = canonAbbr(t.abbreviation) || byTeamId[String(t.id)] || '';
+      const abbr = canonAbbr(t.abbreviation, league) || byTeamId[String(t.id)] || '';
       (tb.statistics || []).forEach(function (cat) {
         (cat.athletes || []).forEach(function (a) {
           const ath = a.athlete || {};
@@ -172,7 +178,7 @@
       g.scoringPlays.push({
         text: sp.text || '',
         type: (sp.type && (sp.type.text || sp.type.abbreviation)) || '',
-        team: byTeamId[tid] || canonAbbr(sp.team && sp.team.abbreviation) || '',
+        team: byTeamId[tid] || canonAbbr(sp.team && sp.team.abbreviation, league) || '',
         period: sp.period && sp.period.number != null ? sp.period.number : n(sp.period),
         clock: sp.clock && sp.clock.displayValue ? sp.clock.displayValue : '',
         awayScore: n(sp.awayScore),

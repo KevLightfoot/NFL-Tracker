@@ -1,4 +1,8 @@
-/* NFL team table + fuzzy team-name matching (works in Node and the browser). */
+/* Team tables + fuzzy team-name matching for NFL and college football (works in Node and the browser).
+ *  - NFL: fixed 32-team table.
+ *  - CFB: ~134 FBS teams register themselves from ESPN game data (registerGame), so nothing goes stale.
+ *  matchTeam(text, league)  league = 'nfl' | 'cfb' | undefined (undefined tries NFL first, then CFB).
+ */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
   else root.NFLTeams = factory();
@@ -39,46 +43,106 @@
     ['WSH', 'Washington', 'Commanders', 'wsh,was,wft,washington football team', 1],
   ];
 
+  /* Common college slang -> text that matches an ESPN short name / location (after norm). CFB only. */
+  const CFB_SLANG = {
+    'bama': 'alabama', 'roll tide': 'alabama', 'uga': 'georgia', 'ole miss': 'ole miss', 'olemiss': 'ole miss', 'mississippi': 'ole miss',
+    'miss state': 'mississippi state', 'mich state': 'michigan state', 'penn st': 'penn state', 'nc state': 'nc state',
+    'north carolina state': 'nc state', 'texas am': 'texas a m', 'tamu': 'texas a m', 'aggies': 'texas a m', 'cuse': 'syracuse',
+    'pitt': 'pittsburgh', 'cal': 'california', 'cal berkeley': 'california', 'miami fl': 'miami', 'miami florida': 'miami',
+    'miami ohio': 'miami oh', 'umass': 'massachusetts', 'uconn': 'connecticut', 'appalachian state': 'app state', 'app st': 'app state',
+    'southern cal': 'usc', 'hawaii': 'hawaii', 'la tech': 'louisiana tech', 'ul lafayette': 'louisiana', 'louisiana lafayette': 'louisiana',
+    'ul monroe': 'louisiana monroe', 'ohio st': 'ohio state', 'florida st': 'florida state', 'oklahoma st': 'oklahoma state',
+  };
+
   function norm(s) {
-    return String(s == null ? '' : s)
-      .toLowerCase()
-      .replace(/\./g, '')
+    let t = String(s == null ? '' : s).toLowerCase();
+    try { t = t.normalize('NFD').replace(/[̀-ͯ]/g, ''); } catch (e) { /* old engine */ }
+    t = t.replace(/['’`.]/g, '')                         // hawai'i, N.C. State
+      .replace(/^\s*(?:no\s*)?[#(]?\d{1,2}[)]?\s+(?=[a-z])/, '')  // "#5 Georgia", "(5) Georgia", "No. 5 Georgia"
       .replace(/[^a-z0-9 ]+/g, ' ')
+      .replace(/\bst\b/g, 'state')                        // "Ohio St" -> "ohio state", "Boise St" -> "boise state"
       .replace(/\s+/g, ' ')
       .trim();
+    return t;
   }
 
-  const EXACT = Object.create(null); // alias -> abbr (exact whole-string match)
-  const LONG = []; // [alias, abbr] for word-boundary substring matching (len >= 4)
-  const INFO = Object.create(null);
+  function makeRegistry() { return { EXACT: Object.create(null), PRI: Object.create(null), LONG: [], dirty: false, INFO: Object.create(null), SEEN: Object.create(null), BLOCK: Object.create(null) }; }
+  const REG = { nfl: makeRegistry(), cfb: makeRegistry() };
 
+  /* priority: 3 = abbreviation, 2 = city/short name/full name, 1 = nickname. Equal-priority clashes become ambiguous and are dropped. */
+  function addAlias(R, alias, abbr, pri) {
+    const a = norm(alias);
+    if (!a || R.BLOCK[a]) return;
+    const cur = R.EXACT[a];
+    if (cur === undefined) { R.EXACT[a] = abbr; R.PRI[a] = pri; R.dirty = true; return; }
+    if (cur === abbr) { if (pri > R.PRI[a]) R.PRI[a] = pri; return; }
+    if (pri > R.PRI[a]) { R.EXACT[a] = abbr; R.PRI[a] = pri; R.dirty = true; }
+    else if (pri === R.PRI[a]) { delete R.EXACT[a]; delete R.PRI[a]; R.BLOCK[a] = true; R.dirty = true; }
+  }
+
+  function rebuildLong(R) {
+    R.LONG = [];
+    Object.keys(R.EXACT).forEach(function (a) { if (a.length >= 4 && !/^\d+$/.test(a)) R.LONG.push([a, R.EXACT[a]]); });
+    R.LONG.sort(function (x, y) { return y[0].length - x[0].length; });
+    R.dirty = false;
+  }
+
+  /* NFL: static table */
   DATA.forEach(function (row) {
-    const abbr = row[0], city = row[1], nick = row[2], extra = row[3], uniq = row[4];
-    INFO[abbr] = { abbr: abbr, city: city, nick: nick, full: city + ' ' + nick };
-    const aliases = [norm(city + ' ' + nick), norm(nick), abbr.toLowerCase()];
-    if (uniq) aliases.push(norm(city));
-    extra.split(',').forEach(function (e) { if (e) aliases.push(norm(e)); });
-    aliases.forEach(function (a) {
-      if (!a) return;
-      if (!EXACT[a]) EXACT[a] = abbr;
-      if (a.length >= 4 && !/^\d+$/.test(a)) LONG.push([a, abbr]);
-    });
+    const abbr = row[0], city = row[1], nick = row[2], extra = row[3], uniq = row[4], R = REG.nfl;
+    R.INFO[abbr] = { abbr: abbr, city: city, nick: nick, full: city + ' ' + nick };
+    addAlias(R, city + ' ' + nick, abbr, 2); addAlias(R, nick, abbr, 2); addAlias(R, abbr, abbr, 3);
+    if (uniq) addAlias(R, city, abbr, 2);
+    extra.split(',').forEach(function (e) { if (e) addAlias(R, e, abbr, 2); });
   });
-  LONG.sort(function (a, b) { return b[0].length - a[0].length; });
 
-  function matchTeam(str) {
-    const n = norm(str);
+  /* CFB: register one team {abbr, name, short, nick, location}. Idempotent. */
+  function registerTeam(league, t) {
+    const R = REG[league]; if (!R || !t || !t.abbr) return;
+    const abbr = t.abbr, key = abbr + '|' + (t.name || '') + '|' + (t.short || '');
+    if (R.SEEN[key]) return; R.SEEN[key] = true;
+    const short = t.short || t.location || t.name || abbr;
+    if (!R.INFO[abbr]) R.INFO[abbr] = { abbr: abbr, city: t.location || short, nick: t.nick || '', short: short, full: t.name || short };
+    addAlias(R, abbr, abbr, 3);
+    if (t.name) addAlias(R, t.name, abbr, 2);
+    if (t.short) addAlias(R, t.short, abbr, 2);
+    if (t.location) addAlias(R, t.location, abbr, 2);
+    if (t.nick) addAlias(R, t.nick, abbr, 1);     // "Tigers" is shared by many schools -> dropped as ambiguous
+    // re-check slang that points at this team's names
+  }
+
+  function registerGame(g) {
+    if (!g) return;
+    const league = g.league === 'cfb' ? 'cfb' : 'nfl';
+    if (league !== 'cfb') return;                  // NFL uses the fixed table
+    ['away', 'home'].forEach(function (s) { if (g[s]) registerTeam('cfb', g[s]); });
+  }
+
+  function matchIn(R, str, league) {
+    let n = norm(str);
     if (!n) return null;
-    if (EXACT[n]) return EXACT[n];
-    for (let i = 0; i < LONG.length; i++) {
-      const a = LONG[i][0];
-      if (n === a || n.indexOf(' ' + a + ' ') >= 0 || n.startsWith(a + ' ') || n.endsWith(' ' + a)) return LONG[i][1];
+    if (league === 'cfb' && CFB_SLANG[n]) n = CFB_SLANG[n];
+    if (R.dirty) rebuildLong(R);
+    if (R.EXACT[n]) return R.EXACT[n];
+    for (let i = 0; i < R.LONG.length; i++) {
+      const a = R.LONG[i][0];
+      if (n === a || n.indexOf(' ' + a + ' ') >= 0 || n.startsWith(a + ' ') || n.endsWith(' ' + a)) return R.LONG[i][1];
     }
     return null;
   }
 
-  function name(abbr) { return INFO[abbr] ? INFO[abbr].nick : abbr || ''; }
-  function fullName(abbr) { return INFO[abbr] ? INFO[abbr].full : abbr || ''; }
+  function matchTeam(str, league) {
+    if (league === 'nfl' || league === 'cfb') return matchIn(REG[league], str, league);
+    return matchIn(REG.nfl, str, 'nfl') || matchIn(REG.cfb, str, 'cfb');
+  }
 
-  return { matchTeam: matchTeam, name: name, fullName: fullName, norm: norm, INFO: INFO };
+  function infoFor(abbr, league) { return (league && REG[league] && REG[league].INFO[abbr]) || REG.nfl.INFO[abbr] || REG.cfb.INFO[abbr] || null; }
+  function name(abbr, league) {
+    const i = infoFor(abbr, league);
+    if (!i) return abbr || '';
+    return league === 'cfb' || (!league && !REG.nfl.INFO[abbr]) ? (i.short || i.city || abbr) : i.nick;
+  }
+  function fullName(abbr, league) { const i = infoFor(abbr, league); return i ? i.full : abbr || ''; }
+
+  return { matchTeam: matchTeam, name: name, fullName: fullName, norm: norm, registerGame: registerGame, registerTeam: registerTeam, INFO: REG.nfl.INFO, CFB_INFO: REG.cfb.INFO };
 });

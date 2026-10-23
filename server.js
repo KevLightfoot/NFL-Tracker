@@ -4,7 +4,7 @@
  * Parlay Tracker server — zero dependencies (Node 18+).
  *   POST /api/parse    screenshot(s) -> structured bet (OpenAI vision)
  *   GET  /api/config   {hasServerKey, model}
- *   GET  /api/games    NFL games (scoreboard, ~3 weeks window)
+ *   GET  /api/games    NFL + college football games (scoreboard, ~3 weeks window)
  *   GET  /api/game/:id live box score + scoring plays for one game
  *   POST /api/resolve  find the game (and team) for each leg
  */
@@ -26,8 +26,11 @@ const PORT = parseInt(process.env.PORT, 10) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 const MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || 'https://kevlightfoot.github.io';
-const ESPN = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl';
-const ESPN_ALT = 'https://site.web.api.espn.com/apis/site/v2/sports/football/nfl';
+const ESPN_BASE = 'https://site.api.espn.com/apis/site/v2/sports/football';
+const ESPN_ALT_BASE = 'https://site.web.api.espn.com/apis/site/v2/sports/football';
+const LEAGUE_PATH = { nfl: 'nfl', cfb: 'college-football' };
+// ESPN college scoreboards only list every game when a conference group is given: 80 = FBS, 81 = FCS (set CFB_GROUPS=80,81 to include FCS).
+const CFB_GROUPS = (process.env.CFB_GROUPS || '80').split(',').map(function (x) { return x.trim(); }).filter(Boolean);
 const PUBLIC = path.join(__dirname, 'public');
 
 /* ---------------- tiny cache ---------------- */
@@ -57,36 +60,61 @@ async function getJSON(url) {
 async function getGames() {
   return cached('games', 20000, async function () {
     const day = function (off) { return new Date(Date.now() + off * 864e5).toISOString().slice(0, 10).replace(/-/g, ''); };
-    const urls = [ESPN + '/scoreboard?limit=100', ESPN + '/scoreboard?dates=' + day(-10) + '-' + day(14) + '&limit=300'];
-    const rs = await Promise.allSettled(urls.map(getJSON));
-    const byId = new Map(), thisWeek = new Set();
+    const range = day(-10) + '-' + day(14);
+    const jobs = [
+      { league: 'nfl', week: true, url: ESPN_BASE + '/nfl/scoreboard?limit=100' },
+      { league: 'nfl', week: false, url: ESPN_BASE + '/nfl/scoreboard?dates=' + range + '&limit=300' },
+    ];
+    CFB_GROUPS.forEach(function (grp) {
+      jobs.push({ league: 'cfb', week: true, url: ESPN_BASE + '/college-football/scoreboard?groups=' + grp + '&limit=400' });
+      jobs.push({ league: 'cfb', week: false, url: ESPN_BASE + '/college-football/scoreboard?dates=' + range + '&groups=' + grp + '&limit=600' });
+    });
+    const rs = await Promise.allSettled(jobs.map(function (j) { return getJSON(j.url); }));
+    const byKey = new Map(), thisWeek = new Set();
+    let firstErr = null;
     rs.forEach(function (r, i) {
-      if (r.status !== 'fulfilled') return;
+      if (r.status !== 'fulfilled') { if (!firstErr) firstErr = r.reason; return; }
       (r.value.events || []).forEach(function (ev) {
-        const g = Stats.normalizeEvent(ev);
+        const g = Stats.normalizeEvent(ev, jobs[i].league);
         if (!g.away || !g.home) return;
-        byId.set(g.id, g);
-        if (i === 0) thisWeek.add(g.id);
+        const key = g.league + ':' + g.id;
+        byKey.set(key, g);
+        if (jobs[i].week) thisWeek.add(key);
       });
     });
-    if (!byId.size) throw new Error('Could not reach the ESPN scoreboard (' + (rs[0].reason && rs[0].reason.message || 'no data') + ')');
-    return Array.from(byId.values())
-      .map(function (g) { g.thisWeek = thisWeek.has(g.id); return g; })
+    if (!byKey.size) throw new Error('Could not reach the ESPN scoreboard (' + (firstErr && firstErr.message || 'no data') + ')');
+    return Array.from(byKey.entries())
+      .map(function (kv) { kv[1].thisWeek = thisWeek.has(kv[0]); return kv[1]; })
       .sort(function (a, b) { return new Date(a.date) - new Date(b.date); });
   });
 }
 
-async function getGame(id) {
+/* Which league(s) could this game id belong to? A hint wins; otherwise look it up on the scoreboard; otherwise try both. */
+async function leaguesFor(id, hint) {
+  if (hint === 'nfl' || hint === 'cfb') return [hint];
+  try { const g = (await getGames()).find(function (x) { return x.id === id; }); if (g) return [g.league]; } catch (e) { /* scoreboard down */ }
+  return ['nfl', 'cfb'];
+}
+
+async function getGame(id, hint) {
   id = String(id).replace(/[^0-9a-zA-Z_-]/g, '');
   const hit = cache.get('g' + id);
   if (hit && hit.exp > Date.now()) return hit.val;
-  let j;
-  try { j = await getJSON(ESPN + '/summary?event=' + id); }
-  catch (e) { j = await getJSON(ESPN_ALT + '/summary?event=' + id); }
-  const g = Stats.normalizeSummary(j, id);
+  let j = null, league = null, lastErr = null;
+  for (const lg of await leaguesFor(id, hint)) {
+    for (const base of [ESPN_BASE, ESPN_ALT_BASE]) {
+      try {
+        const r = await getJSON(base + '/' + LEAGUE_PATH[lg] + '/summary?event=' + id);
+        if (r && (r.header || r.boxscore)) { j = r; league = lg; break; }
+      } catch (e) { lastErr = e; }
+    }
+    if (j) break;
+  }
+  if (!j) throw lastErr || new Error('Game ' + id + ' not found');
+  const g = Stats.normalizeSummary(j, id, league);
   // The summary header sometimes lacks period/clock/linescores; backfill from the (cached) scoreboard.
   try {
-    const sb = (await getGames()).find(function (x) { return x.id === g.id; });
+    const sb = (await getGames()).find(function (x) { return x.id === g.id && x.league === league; });
     if (sb) {
       if (!g.hasStatus) { g.state = sb.state; g.completed = sb.completed; g.detail = sb.detail; g.period = sb.period; g.clock = sb.clock; }
       if (!g.period && sb.period && g.state === 'in') g.period = sb.period;
@@ -106,9 +134,10 @@ async function getGame(id) {
   return g;
 }
 
-async function getRoster(teamId) {
-  return cached('roster' + teamId, 12 * 3600 * 1000, async function () {
-    const j = await getJSON(ESPN + '/teams/' + teamId + '/roster');
+async function getRoster(teamId, league) {
+  league = league === 'cfb' ? 'cfb' : 'nfl';
+  return cached('roster' + league + teamId, 12 * 3600 * 1000, async function () {
+    const j = await getJSON(ESPN_BASE + '/' + LEAGUE_PATH[league] + '/teams/' + teamId + '/roster');
     const out = [];
     (j.athletes || []).forEach(function (grp) {
       (grp.items || [grp]).forEach(function (a) { const nm = a.displayName || a.fullName; if (nm) out.push({ name: nm }); });
@@ -144,38 +173,50 @@ function pickGame(cands, leg) {
 }
 
 async function resolveLeg(leg, games) {
-  const abbrs = [leg.away_team, leg.home_team].map(Teams.matchTeam).filter(Boolean);
-  const teamHint = Teams.matchTeam(leg.team);
+  const hint = leg.league === 'nfl' || leg.league === 'cfb' ? leg.league : null;
+  let res = await resolveIn(leg, games, hint);
+  if (!res.gameId && hint) res = await resolveIn(leg, games, null); // the league hint can be wrong — retry across both
+  return res;
+}
+
+async function resolveIn(leg, games, hint) {
+  const pool = hint ? games.filter(function (g) { return g.league === hint; }) : games;
+  // does this name refer to one of the two teams in game g? (matching is done in the game's own league)
+  const refers = function (name, g) { const a = name ? Teams.matchTeam(name, g.league) : null; return !!a && (a === g.away.abbr || a === g.home.abbr); };
+  const matchup = [leg.away_team, leg.home_team].filter(Boolean);
   let cands = [];
-  if (abbrs.length === 2) cands = games.filter(function (g) { return abbrs.every(function (a) { return a === g.away.abbr || a === g.home.abbr; }); });
-  if (!cands.length && teamHint) cands = games.filter(function (g) { return g.away.abbr === teamHint || g.home.abbr === teamHint; });
-  if (!cands.length && abbrs.length) cands = games.filter(function (g) { return abbrs.some(function (a) { return a === g.away.abbr || a === g.home.abbr; }); });
+  if (matchup.length === 2) cands = pool.filter(function (g) { return matchup.every(function (n) { return refers(n, g); }); });
+  if (!cands.length && leg.team) cands = pool.filter(function (g) { return refers(leg.team, g); });
+  if (!cands.length && matchup.length) cands = pool.filter(function (g) { return matchup.some(function (n) { return refers(n, g); }); });
   let game = pickGame(cands, leg);
-  let team = teamHint || null;
+  let team = game && leg.team ? (Teams.matchTeam(leg.team, game.league) || null) : null;
 
   if (!game && leg.player) {
-    // search by player: box scores of live/final games, rosters of upcoming games
-    const order = games.filter(function (g) { return g.thisWeek; }).concat(games.filter(function (g) { return !g.thisWeek; }));
-    for (let i = 0; i < order.length && !game; i++) {
-      const g = order[i];
-      try {
-        if (g.state === 'pre') {
-          for (const side of [g.away, g.home]) {
-            const roster = await getRoster(side.id);
-            if (Stats.findPlayer(roster, leg.player)) { game = g; team = side.abbr; break; }
-          }
-        } else {
-          const full = await getGame(g.id);
-          const p = Stats.findPlayer(full.players, leg.player);
-          if (p) { game = g; team = p.team; }
+    // Find the player when the slip shows no matchup: box scores of live/final games, rosters of upcoming ones.
+    // College has ~60 games a week, so only the current week is scanned, a few games at a time.
+    const order = pool.filter(function (g) { return g.thisWeek; }).slice(0, 160);
+    const check = async function (g) {
+      if (g.state === 'pre') {
+        for (const side of [g.away, g.home]) {
+          const roster = await getRoster(side.id, g.league);
+          if (Stats.findPlayer(roster, leg.player)) return { game: g, team: side.abbr };
         }
-      } catch (e) { /* skip this game */ }
+        return null;
+      }
+      const full = await getGame(g.id, g.league);
+      const p = Stats.findPlayer(full.players, leg.player);
+      return p ? { game: g, team: p.team } : null;
+    };
+    for (let i = 0; i < order.length && !game; i += 8) {
+      const found = await Promise.all(order.slice(i, i + 8).map(function (g) { return check(g).catch(function () { return null; }); }));
+      const hitOne = found.find(Boolean);
+      if (hitOne) { game = hitOne.game; team = hitOne.team; }
     }
   }
   if (game && !team && leg.player && game.state !== 'pre') {
-    try { const full = await getGame(game.id); const p = Stats.findPlayer(full.players, leg.player); if (p) team = p.team; } catch (e) { /* ignore */ }
+    try { const full = await getGame(game.id, game.league); const p = Stats.findPlayer(full.players, leg.player); if (p) team = p.team; } catch (e) { /* ignore */ }
   }
-  return { id: leg.id, gameId: game ? game.id : null, team: team };
+  return { id: leg.id, gameId: game ? game.id : null, team: team, league: game ? game.league : null };
 }
 
 /* ---------------- OpenAI vision parsing ---------------- */
@@ -215,6 +256,7 @@ const TOOL = {
             side: { type: ['string', 'null'], enum: ['over', 'under', 'yes', null] },
             line: Object.assign({ description: 'Spread: signed number for the team bet on (+7.5, -3). Total/prop: the number. For "N+" ladder lines use over with line N-0.5.' }, NUM_OR_NULL),
             odds: Object.assign({ description: 'American odds for this leg if shown.' }, STR_OR_NULL),
+            league: { type: ['string', 'null'], enum: ['nfl', 'cfb', null], description: 'nfl = pro football teams/players. cfb = college football (NCAAF): college teams like Georgia, Ohio State, Notre Dame, rankings like "#5", or NCAAF/CFB labels. null if you cannot tell.' },
             away_team: Object.assign({ description: 'Away team of the game this leg is in, if the matchup is shown.' }, STR_OR_NULL),
             home_team: Object.assign({ description: 'Home team of the game this leg is in, if the matchup is shown.' }, STR_OR_NULL),
             game_date: Object.assign({ description: 'ISO date (YYYY-MM-DD) of the game if the slip shows a date or day, else null.' }, STR_OR_NULL),
@@ -242,10 +284,11 @@ const TOOL = {
 function systemPrompt() {
   const today = new Date().toISOString().slice(0, 10);
   return [
-    'You read screenshots of NFL betting slips from ANY sportsbook or app (DraftKings, FanDuel, BetMGM, Caesars, ESPN BET, bet365, Hard Rock, Fanatics, PrizePicks/Underdog-style cards, paper tickets, etc.) in any layout, and return every leg through the submit_bet tool.',
+    'You read screenshots of NFL and college football (NCAAF / CFB) betting slips from ANY sportsbook or app (DraftKings, FanDuel, BetMGM, Caesars, ESPN BET, bet365, Hard Rock, Fanatics, PrizePicks/Underdog-style cards, paper tickets, etc.) in any layout, and return every leg through the submit_bet tool.',
     'Today is ' + today + '.',
     'Rules:',
     '- Extract EVERY leg. Never invent legs. If the slip states a leg count (e.g. "5 Leg Parlay") make sure you return that many; otherwise add a warning.',
+    '- Set league on every leg: "cfb" for college football (college teams such as Georgia, Ohio State, Alabama; rankings like #5; NCAAF/CFB labels), "nfl" for pro teams. A slip can mix both. Use team names exactly as printed, without the ranking number.',
     '- Same-game parlays / bet builders: list each selection as its own leg, with the matchup on every leg.',
     '- Markets: moneyline; spread (line is signed for the team bet on); total = game over/under; team_total = one team\'s points over/under; player_prop for every player stat (passing, rushing, receiving, receptions, fantasy points, kicking, defense, combined stats); anytime_td / first_td / last_td for scorer markets; period = 1h/2h/q1..q4 for half or quarter markets. Use "other" only when nothing fits and explain in notes.',
     '- Ladder / alt lines like "100+ Receiving Yards" or "To Record 3+ Receptions": side=over, line=N-0.5 (99.5, 2.5). "To score 2+ TDs": player_prop, stat=total_tds, over 1.5.',
@@ -336,7 +379,7 @@ async function handleApi(req, res, url) {
   if (p === '/api/resolve' && req.method === 'POST' && !rateLimit(req, res, 'resolve', 120, 60 * 60 * 1000)) return;
   if (p === '/api/config' && req.method === 'GET') return send(res, 200, { hasServerKey: !!process.env.OPENAI_API_KEY, model: MODEL });
   if (p === '/api/games' && req.method === 'GET') return send(res, 200, { games: await getGames() });
-  if (p.startsWith('/api/game/') && req.method === 'GET') return send(res, 200, { game: await getGame(p.slice('/api/game/'.length)) });
+  if (p.startsWith('/api/game/') && req.method === 'GET') return send(res, 200, { game: await getGame(p.slice('/api/game/'.length), url.searchParams.get('league')) });
   if (p === '/api/resolve' && req.method === 'POST') {
     const body = JSON.parse(await readBody(req, 2e6) || '{}');
     const games = await getGames();
