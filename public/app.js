@@ -190,8 +190,19 @@
       more + '</div></li>';
   }
  
+  /* Legs in kickoff order (earliest first); legs with no matched game keep their slip order at the end. */
+  function kickoffOrder(p) {
+    const t = function (l) { const g = S.games[l.gameId]; const v = g && g.date ? Date.parse(g.date) : NaN; return isNaN(v) ? Infinity : v; };
+    return p.legs.map(function (l, i) { return { i: i, t: t(l) }; })
+      .sort(function (a, b) { return a.t === b.t ? a.i - b.i : (a.t < b.t ? -1 : 1); })
+      .map(function (x) { return x.i; });
+  }
+ 
   function parlayHTML(p) {
-    const results = resultsFor(p);
+    const order = kickoffOrder(p);
+    const all = resultsFor(p);
+    const results = order.map(function (i) { return all[i]; });
+    const legsSorted = order.map(function (i) { return p.legs[i]; });
     const sum = E.summarize(results);
     const pill = { pending: ['pending', 'Not started'], live: ['live', 'Live · ' + sum.hits + '/' + sum.total + ' ✓'], won: ['won', 'Won ✓'], lost: ['lost', 'Lost ✕'], void: ['void', 'Void'] }[sum.status];
     const title = (p.name ? esc(p.name) : (p.legs.length + '-Leg ' + (BET_LABEL[p.betType] || 'Parlay'))) +
@@ -206,7 +217,7 @@
       '<div class="money"><div><label>WAGER</label><b>' + money(p.wager) + '</b></div><div class="payout"><label>PAYOUT</label><b>' + money(p.payout) + '</b></div><div><label>ODDS</label><b>' + esc(p.odds || '—') + '</b></div></div>' +
       '<div class="segs">' + segs + '</div>' + warns + '</div>' +
       '<div class="pbody"' + (collapsed ? ' hidden' : '') + '>' +
-      '<ul class="legs">' + p.legs.map(function (l, i) { return legHTML(p, l, results[i]); }).join('') + '</ul>' +
+      '<ul class="legs">' + legsSorted.map(function (l, i) { return legHTML(p, l, results[i]); }).join('') + '</ul>' +
       '<div class="pf"><span>' + esc(upd) + '</span><span class="btns"><button class="btn small" data-act="edit-bet" data-p="' + p.id + '">Edit bet</button><button class="btn small danger" data-act="clear-slip" data-p="' + p.id + '">Clear slip</button></span></div></div></article>';
   }
  
