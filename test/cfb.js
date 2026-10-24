@@ -6,11 +6,11 @@ const F = require('./fixtures.js');
 const Teams = require('../public/lib/teams.js');
 const Stats = require('../public/lib/stats.js');
 const E = require('../public/lib/evaluate.js');
- 
+
 let pass = 0, fail = 0;
 const tests = [];
 function test(name, fn) { tests.push([name, fn]); }
- 
+
 /* ESPN college teams carry location / short name / nickname */
 function cteam(id, abbr, location, nick, short) {
   return { id: String(id), abbreviation: abbr, displayName: location + ' ' + nick, shortDisplayName: short || location, name: nick, location: location };
@@ -20,14 +20,15 @@ const OSU = cteam(194, 'OSU', 'Ohio State', 'Buckeyes'), MICH = cteam(130, 'MICH
 const MSST = cteam(344, 'MSST', 'Mississippi State', 'Bulldogs'), MISS = cteam(145, 'MISS', 'Ole Miss', 'Rebels'), TAMU = cteam(245, 'TAMU', 'Texas A&M', 'Aggies');
 const ALA = cteam(333, 'ALA', 'Alabama', 'Crimson Tide'), MIA = cteam(2390, 'MIA', 'Miami', 'Hurricanes'), MOH = cteam(193, 'M-OH', 'Miami (OH)', 'RedHawks', 'Miami (OH)');
 const BUFc = cteam(2084, 'BUF', 'Buffalo', 'Bulls'), TX = cteam(251, 'TEX', 'Texas', 'Longhorns');
- 
+const SC = cteam(2579, 'SC', 'South Carolina', 'Gamecocks'), CLEM = cteam(228, 'CLEM', 'Clemson', 'Tigers');
+
 function cgame(id, away, home, o) {
   o = o || {};
   const sum = F.summary(Object.assign({ id: id, away: away.abbreviation, home: home.abbreviation, state: 'in', period: 3, clock: '5:12', awayScore: 17, homeScore: 24, awayLs: [7, 10, 0], homeLs: [10, 7, 7] }, o));
   sum.header.competitions[0].competitors.forEach(function (c) { c.team = c.homeAway === 'home' ? home : away; });
   return sum;
 }
- 
+
 test('college teams match by short name, abbreviation, slang, rank prefix and "St"', function () {
   [UGA, GT, AUB, OSU, MICH, MSU, MSST, MISS, TAMU, ALA, MIA, MOH].forEach(function (t) { Teams.registerTeam('cfb', { abbr: t.abbreviation, name: t.displayName, short: t.shortDisplayName, nick: t.name, location: t.location }); });
   const m = function (s) { return Teams.matchTeam(s, 'cfb'); };
@@ -49,23 +50,33 @@ test('college teams match by short name, abbreviation, slang, rank prefix and "S
   assert.strictEqual(m('Connecticut'), 'CONN');
   assert.strictEqual(m('UMass'), 'MASS');
   assert.strictEqual(m('Massachusetts'), 'MASS');
+  Teams.registerTeam('cfb', { abbr: 'SC', name: 'South Carolina Gamecocks', short: 'South Carolina', nick: 'Gamecocks', location: 'South Carolina' });
+  assert.strictEqual(m('S Carolina'), 'SC');                // slips abbreviate the direction
+  assert.strictEqual(m('S Carolina -2.5'), 'SC');
+  assert.strictEqual(m('South Carolina'), 'SC');
   assert.strictEqual(m('Miami'), 'MIA');
   assert.strictEqual(m('Miami OH'), 'M-OH');
   assert.strictEqual(m('Crimson Tide'), 'ALA');
   assert.strictEqual(m('Bulldogs'), null, '"Bulldogs" is shared by Georgia and Mississippi State -> ambiguous, not guessed');
   assert.strictEqual(m('Tigers'), 'AUB');                    // only one Tigers registered here
 });
- 
+
 test('NFL matching is untouched and stays separate from college', function () {
   assert.strictEqual(Teams.matchTeam('Jets', 'nfl'), 'NYJ');
   assert.strictEqual(Teams.matchTeam('Jets'), 'NYJ');
   assert.strictEqual(Teams.matchTeam('49ers +3', 'nfl'), 'SF');
   assert.strictEqual(Teams.matchTeam('Jets', 'cfb'), null);
   assert.strictEqual(Teams.matchTeam('Georgia', 'nfl'), null);
+  assert.strictEqual(Teams.matchTeam('S Carolina', 'nfl'), null, '"S Carolina" is not the Carolina Panthers');
+  assert.strictEqual(Teams.matchTeam('South Carolina', 'nfl'), null);
+  assert.strictEqual(Teams.matchTeam('North Carolina', 'nfl'), null);
+  assert.strictEqual(Teams.matchTeam('Arizona State', 'nfl'), null, '"Arizona State" is not the Cardinals');
+  assert.strictEqual(Teams.matchTeam('Carolina', 'nfl'), 'CAR'); assert.strictEqual(Teams.matchTeam('Carolina Panthers -2.5', 'nfl'), 'CAR');
+  assert.strictEqual(Teams.matchTeam('Georgia Bulldogs', 'cfb', true), 'UGA'); assert.strictEqual(Teams.matchTeam('Georgia Bulldogs +3', 'cfb', true), null, 'strict = exact names only');
   assert.strictEqual(Teams.name('NYJ', 'nfl'), 'Jets');
   assert.strictEqual(Teams.name('UGA', 'cfb'), 'Georgia');
 });
- 
+
 test('college summary keeps ESPN abbreviations and tags the league', function () {
   const g = Stats.normalizeSummary(cgame(501, UGA, AUB), '501', 'cfb');
   assert.strictEqual(g.league, 'cfb'); assert.strictEqual(g.away.abbr, 'UGA'); assert.strictEqual(g.home.short, 'Auburn'); assert.strictEqual(g.home.nick, 'Tigers');
@@ -73,7 +84,7 @@ test('college summary keeps ESPN abbreviations and tags the league', function ()
   assert.strictEqual(ev.league, 'cfb'); assert.strictEqual(ev.away.abbr, 'OSU');
   assert.strictEqual(Stats.normalizeEvent(F.ev(1, F.IND, F.HOU, 'pre', 0, 0)).league, 'nfl'); // default
 });
- 
+
 test('moneyline, spread, total and props evaluate on a college game', function () {
   const box = [
     F.box(UGA, [F.cat('passing', ['C/ATT', 'YDS', 'AVG', 'TD', 'INT', 'SACKS', 'QBR', 'RTG'], [['1', 'Carson Beck', ['18/25', '231', '9.2', '2', '0', '1-7', '80', '160']]]),
@@ -83,7 +94,7 @@ test('moneyline, spread, total and props evaluate on a college game', function (
   ];
   const g = Stats.normalizeSummary(cgame(501, UGA, AUB, { awayScore: 31, homeScore: 17, boxPlayers: box }), '501', 'cfb');
   const ev = function (leg) { return E.evaluateLeg(Object.assign({ id: 'x' }, leg), g); };
- 
+
   let r = ev({ market: 'moneyline', team: 'Georgia' });
   assert.strictEqual(r.state, 'live'); assert.strictEqual(r.onTrack, true); assert.strictEqual(r.title, 'Georgia ML'); assert.ok(/UGA 31 – AUB 17/.test(r.scoreText), r.scoreText);
   r = ev({ market: 'spread', team: 'Auburn', line: 14.5 }); assert.strictEqual(r.onTrack, true);   // 17+14.5 > 31
@@ -95,7 +106,7 @@ test('moneyline, spread, total and props evaluate on a college game', function (
   r = ev({ market: 'anytime_td', player: 'Jarquez Hunter', team: 'Auburn' }); assert.strictEqual(r.state, 'live');
   r = ev({ market: 'moneyline', team: 'Georgia Tech' }); assert.strictEqual(r.state, 'unresolved'); // wrong team for this game: don't guess
 });
- 
+
 test('final college game settles legs', function () {
   const g = Stats.normalizeSummary(cgame(503, OSU, MICH, { state: 'post', period: 4, clock: '0:00', awayScore: 24, homeScore: 27, detail: 'Final' }), '503', 'cfb');
   assert.strictEqual(E.evaluateLeg({ id: 'a', market: 'moneyline', team: 'Michigan' }, g).state, 'hit');
@@ -103,12 +114,12 @@ test('final college game settles legs', function () {
   assert.strictEqual(E.evaluateLeg({ id: 'c', market: 'spread', team: 'Michigan', line: -3.5 }, g).state, 'miss');
   assert.strictEqual(E.evaluateLeg({ id: 'd', market: 'total', side: 'under', line: 51.5 }, g).state, 'hit');
 });
- 
+
 /* ---------- server: league-aware lookup, mixed slips ---------- */
 test('server: mixed NFL + college slip resolves each leg to the right league', async function () {
   const realFetch = global.fetch, seen = [];
-  const nflSb = { events: [F.ev(401, F.IND, F.HOU, 'in', 17, 24), F.ev(402, F.team(3, 'NYJ', 'New York Jets'), F.team(4, 'DEN', 'Denver Broncos'), 'pre', 0, 0), F.ev(403, F.team(5, 'BUF', 'Buffalo Bills'), F.team(6, 'MIA', 'Miami Dolphins'), 'pre', 0, 0)] };
-  const cfbSb = { events: [F.ev(501, UGA, AUB, 'pre', 0, 0), F.ev(502, OSU, MICH, 'in', 10, 7), F.ev(504, BUFc, cteam(9, 'KENT', 'Kent State', 'Golden Flashes'), 'pre', 0, 0)] };
+  const nflSb = { events: [F.ev(401, F.IND, F.HOU, 'in', 17, 24), F.ev(402, F.team(3, 'NYJ', 'New York Jets'), F.team(4, 'DEN', 'Denver Broncos'), 'pre', 0, 0), F.ev(403, F.team(5, 'BUF', 'Buffalo Bills'), F.team(6, 'MIA', 'Miami Dolphins'), 'pre', 0, 0), F.ev(406, F.team(7, 'CAR', 'Carolina Panthers'), F.team(8, 'TB', 'Tampa Bay Buccaneers'), 'pre', 0, 0)] };
+  const cfbSb = { events: [F.ev(501, UGA, AUB, 'pre', 0, 0), F.ev(502, OSU, MICH, 'in', 10, 7), F.ev(504, BUFc, cteam(9, 'KENT', 'Kent State', 'Golden Flashes'), 'pre', 0, 0), F.ev(505, SC, CLEM, 'pre', 0, 0)] };
   const json = function (o, status) { return { ok: (status || 200) < 400, status: status || 200, json: async function () { return o; }, text: async function () { return JSON.stringify(o); } }; };
   global.fetch = async function (url) {
     url = String(url); seen.push(url);
@@ -137,8 +148,8 @@ test('server: mixed NFL + college slip resolves each leg to the right league', a
   try {
     let r = await req('GET', '/api/games');
     assert.strictEqual(r.status, 200);
-    assert.deepStrictEqual(r.json.games.map(function (g) { return g.league; }).sort(), ['cfb', 'cfb', 'cfb', 'nfl', 'nfl', 'nfl']);
- 
+    assert.deepStrictEqual(r.json.games.map(function (g) { return g.league; }).sort(), ['cfb', 'cfb', 'cfb', 'cfb', 'nfl', 'nfl', 'nfl', 'nfl']);
+
     r = await req('POST', '/api/resolve', { legs: [
       { id: 'a', market: 'moneyline', team: 'Jets', league: 'nfl' },
       { id: 'b', market: 'spread', team: 'Georgia', away_team: 'Georgia', home_team: 'Auburn', league: 'cfb' },
@@ -147,6 +158,10 @@ test('server: mixed NFL + college slip resolves each leg to the right league', a
       { id: 'e', market: 'moneyline', team: 'Buffalo', league: 'nfl' },
       { id: 'f', market: 'moneyline', team: 'Georgia', league: 'nfl' },              // wrong hint -> still found
       { id: 'g', market: 'player_prop', player: 'Jarquez Hunter', league: 'cfb' },   // no matchup: found on a college roster
+      { id: 'h', market: 'spread', team: 'S Carolina', line: -2.5, league: 'cfb' },   // the slip that showed the Carolina Panthers
+      { id: 'i', market: 'spread', team: 'S Carolina', line: -2.5, league: 'nfl' },   // even with a wrong NFL hint
+      { id: 'j', market: 'spread', team: 'S Carolina', line: -2.5 },                  // and with no hint at all
+      { id: 'k', market: 'spread', team: 'Carolina', line: -2.5, league: 'nfl' },     // the real Panthers still resolve
     ] });
     const by = {}; r.json.results.forEach(function (x) { by[x.id] = x; });
     assert.deepStrictEqual([by.a.gameId, by.a.league], ['402', 'nfl']);
@@ -156,14 +171,18 @@ test('server: mixed NFL + college slip resolves each leg to the right league', a
     assert.deepStrictEqual([by.e.gameId, by.e.league], ['403', 'nfl']);
     assert.deepStrictEqual([by.f.gameId, by.f.league], ['501', 'cfb']);
     assert.deepStrictEqual([by.g.gameId, by.g.league, by.g.team], ['501', 'cfb', 'AUB']);
- 
+    assert.deepStrictEqual([by.h.gameId, by.h.league, by.h.team], ['505', 'cfb', 'SC']);
+    assert.deepStrictEqual([by.i.gameId, by.i.league], ['505', 'cfb']);
+    assert.deepStrictEqual([by.j.gameId, by.j.league], ['505', 'cfb']);
+    assert.deepStrictEqual([by.k.gameId, by.k.league, by.k.team], ['406', 'nfl', 'CAR']);
+
     // summary routes to the college endpoint, with or without the league hint
     r = await req('GET', '/api/game/502?league=cfb'); assert.strictEqual(r.json.game.league, 'cfb'); assert.strictEqual(r.json.game.away.abbr, 'OSU');
     assert.ok(seen.some(function (u) { return /college-football\/summary\?event=502/.test(u); }));
     r = await req('GET', '/api/game/401'); assert.strictEqual(r.json.game.league, 'nfl'); assert.ok(seen.some(function (u) { return /\/nfl\/summary\?event=401/.test(u); }));
   } finally { server.close(); global.fetch = realFetch; }
 });
- 
+
 (async function () {
   for (const t of tests) {
     try { await t[1](); pass++; console.log('  ✓ ' + t[0]); } catch (e) { fail++; console.log('  ✗ ' + t[0] + '\n    ' + (e && e.stack || e)); }
@@ -171,4 +190,3 @@ test('server: mixed NFL + college slip resolves each leg to the right league', a
   console.log('\n' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 })();
- 

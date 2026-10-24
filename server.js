@@ -175,21 +175,21 @@ function pickGame(cands, leg) {
 async function resolveLeg(leg, games) {
   const hint = leg.league === 'nfl' || leg.league === 'cfb' ? leg.league : null;
   let res = await resolveIn(leg, games, hint);
-  if (!res.gameId && hint) res = await resolveIn(leg, games, null); // the league hint can be wrong — retry across both
+  if (!res.gameId && hint) res = await resolveIn(leg, games, null, true);   // wrong hint? retry both leagues, but only on exact names // the league hint can be wrong — retry across both
   return res;
 }
 
-async function resolveIn(leg, games, hint) {
+async function resolveIn(leg, games, hint, strict) {
   const pool = hint ? games.filter(function (g) { return g.league === hint; }) : games;
   // does this name refer to one of the two teams in game g? (matching is done in the game's own league)
-  const refers = function (name, g) { const a = name ? Teams.matchTeam(name, g.league) : null; return !!a && (a === g.away.abbr || a === g.home.abbr); };
+  const refers = function (name, g) { const a = name ? Teams.matchTeam(name, g.league, strict) : null; return !!a && (a === g.away.abbr || a === g.home.abbr); };
   const matchup = [leg.away_team, leg.home_team].filter(Boolean);
   let cands = [];
   if (matchup.length === 2) cands = pool.filter(function (g) { return matchup.every(function (n) { return refers(n, g); }); });
   if (!cands.length && leg.team) cands = pool.filter(function (g) { return refers(leg.team, g); });
   if (!cands.length && matchup.length) cands = pool.filter(function (g) { return matchup.some(function (n) { return refers(n, g); }); });
   let game = pickGame(cands, leg);
-  let team = game && leg.team ? (Teams.matchTeam(leg.team, game.league) || null) : null;
+  let team = game && leg.team ? (Teams.matchTeam(leg.team, game.league, strict) || null) : null;
 
   if (!game && leg.player) {
     // Find the player when the slip shows no matchup: box scores of live/final games, rosters of upcoming ones.
@@ -256,7 +256,7 @@ const TOOL = {
             side: { type: ['string', 'null'], enum: ['over', 'under', 'yes', null] },
             line: Object.assign({ description: 'Spread: signed number for the team bet on (+7.5, -3). Total/prop: the number. For "N+" ladder lines use over with line N-0.5.' }, NUM_OR_NULL),
             odds: Object.assign({ description: 'American odds for this leg if shown.' }, STR_OR_NULL),
-            league: { type: ['string', 'null'], enum: ['nfl', 'cfb', null], description: 'nfl = pro football teams/players. cfb = college football (NCAAF): college teams like Georgia, Ohio State, Notre Dame, rankings like "#5", or NCAAF/CFB labels. null if you cannot tell.' },
+            league: { type: ['string', 'null'], enum: ['nfl', 'cfb', null], description: 'nfl = pro football teams/players. cfb = college football (NCAAF): college teams like Georgia, Ohio State, Notre Dame, rankings like "#5", or NCAAF/CFB labels. null if you cannot tell. A slip usually stays in one league: if the other legs are clearly college, mark ambiguous ones (e.g. "S Carolina", "Texas") cfb too.' },
             away_team: Object.assign({ description: 'Away team of the game this leg is in, if the matchup is shown.' }, STR_OR_NULL),
             home_team: Object.assign({ description: 'Home team of the game this leg is in, if the matchup is shown.' }, STR_OR_NULL),
             game_date: Object.assign({ description: 'ISO date (YYYY-MM-DD) of the game if the slip shows a date or day, else null.' }, STR_OR_NULL),

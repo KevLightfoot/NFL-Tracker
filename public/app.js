@@ -19,6 +19,10 @@
     // Remove any old simulated demo parlay from this browser's saved state.
     S.parlays = S.parlays.filter(function (p) { return !p.demo; });
     S.parlays.forEach(function (p) { (p.legs || []).forEach(fixTdLeg); }); // repair slips saved before this fix
+    // A college team that was wrongly matched to an NFL game ("S Carolina" -> Panthers): clear it so it re-matches.
+    S.parlays.forEach(function (p) { (p.legs || []).forEach(function (l) {
+      if (l.gameId && l.league === 'nfl' && !l.noResolve && /^(?:[nsewc] \w|north |south |east |west |central )|\b(?:state|st|tech)\b/i.test(String(l.team || '').trim())) { l.gameId = null; l.league = null; l.teamResolved = null; }
+    }); });
     save();
   }
   try { S.collapsed = new Set(JSON.parse(lsGet(LS_COLLAPSED) || '[]')); } catch (e) { S.collapsed = new Set(); }
