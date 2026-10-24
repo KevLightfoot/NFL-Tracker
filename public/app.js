@@ -9,7 +9,7 @@
   const LS_COLLAPSED = 'parlay-tracker.collapsed.v1', LS_BETS = 'parlay-tracker.v1', LS_KEY = 'parlay-tracker.apiKey';
   // GitHub Pages frontend talks to the Render API. Keep this URL public; never put API keys here.
   const API_BASE = 'https://nfl-parlay-tracker.onrender.com';
-  const S = { parlays: [], games: {}, gamesList: [], expanded: new Set(), collapsed: new Set(), pending: [], config: {}, timer: null, demoTimer: null, lastUpdate: null, busy: false, again: false, fetchError: null, serverDown: false };
+  const S = { parlays: [], games: {}, gamesList: [], expanded: new Set(), collapsed: new Set(), gamesOpen: false, pending: [], config: {}, timer: null, demoTimer: null, lastUpdate: null, busy: false, again: false, fetchError: null, serverDown: false };
  
   /* ---------------- storage ---------------- */
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -22,6 +22,7 @@
     save();
   }
   try { S.collapsed = new Set(JSON.parse(lsGet(LS_COLLAPSED) || '[]')); } catch (e) { S.collapsed = new Set(); }
+  try { S.gamesOpen = lsGet('parlay-tracker.gamesopen.v1') === '1'; } catch (e) { /* ignore */ }
   function saveCollapsed() { try { lsSet(LS_COLLAPSED, JSON.stringify(Array.from(S.collapsed))); } catch (e) { /* ignore */ } }
   function toggleParlay(pid) {
     const art = document.querySelector('.parlay[data-p="' + pid + '"]'); if (!art) return;
@@ -221,6 +222,36 @@
       '<div class="pf"><span>' + esc(upd) + '</span><span class="btns"><button class="btn small" data-act="edit-bet" data-p="' + p.id + '">Edit bet</button><button class="btn small danger" data-act="clear-slip" data-p="' + p.id + '">Clear slip</button></span></div></div></article>';
   }
  
+  /* ---------------- all-games dropdown (only when slips cover different games) ---------------- */
+  function renderGames() {
+    const el = $('#gamesPanel'); if (!el) return;
+    const slips = S.parlays.filter(function (p) { return p.legs.some(function (l) { return l.gameId && S.games[l.gameId]; }); });
+    const byGame = {};
+    slips.forEach(function (p, pi) {
+      p.legs.forEach(function (l) {
+        if (!l.gameId || !S.games[l.gameId]) return;
+        (byGame[l.gameId] = byGame[l.gameId] || { g: S.games[l.gameId], slips: [] });
+        if (byGame[l.gameId].slips.indexOf(pi) < 0) byGame[l.gameId].slips.push(pi);
+      });
+    });
+    const rows = Object.keys(byGame).map(function (k) { return byGame[k]; });
+    // Show only when there are 2+ slips and at least one game isn't in every slip.
+    if (slips.length < 2 || !rows.some(function (r) { return r.slips.length < slips.length; })) { el.hidden = true; el.innerHTML = ''; return; }
+    rows.sort(function (a, b) { const x = Date.parse(a.g.date), y = Date.parse(b.g.date); return (isNaN(x) ? Infinity : x) - (isNaN(y) ? Infinity : y); });
+    const labels = slips.map(function (p) { return p.name || (p.legs.length + '-Leg ' + (BET_LABEL[p.betType] || 'Parlay')); });
+    const seen = {};
+    const names = labels.map(function (n, i) { const dup = labels.filter(function (x) { return x === n; }).length > 1; seen[n] = (seen[n] || 0) + 1; return dup ? n + ' #' + seen[n] : n; });
+    const open = !!S.gamesOpen;
+    el.hidden = false;
+    el.innerHTML = '<button class="gp-head" type="button" aria-expanded="' + open + '" data-gp="toggle"><span><b>All games</b><small>' + rows.length + ' games across ' + slips.length + ' slips</small></span><span class="chev' + (open ? '' : ' down') + '" aria-hidden="true"></span></button>' +
+      '<div class="gp-body"' + (open ? '' : ' hidden') + '>' + rows.map(function (r) {
+        const g = r.g, pre = g.state === 'pre';
+        return '<div class="gp-row"><div class="gp-main"><span class="gp-teams">' + esc(g.away.abbr) + (pre ? '' : ' <b>' + esc(g.away.score) + '</b>') + ' @ ' + esc(g.home.abbr) + (pre ? '' : ' <b>' + esc(g.home.score) + '</b>') + '</span>' +
+          '<span class="gp-status' + (g.state === 'in' ? ' live' : '') + '">' + esc(E.gameStatusText(g)) + '</span></div>' +
+          '<div class="gp-chips">' + r.slips.map(function (pi) { return '<span class="gp-chip">' + esc(names[pi]) + '</span>'; }).join('') + '</div></div>';
+      }).join('') + '</div>';
+  }
+ 
   function render() {
     const root = $('#parlays');
     const prev = {};
@@ -240,6 +271,7 @@
     });
     if (focusId) { const el = root.querySelector('.leg[data-leg="' + focusId + '"]'); if (el) el.focus({ preventScroll: true }); }
     $('#empty').hidden = S.parlays.length > 0 || S.pending.length > 0;
+    renderGames();
   }
  
   function renderPending() {
@@ -569,6 +601,11 @@
     $('#parlays').addEventListener('keydown', function (e) {
       if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('ph')) { e.preventDefault(); toggleParlay(e.target.closest('.parlay').dataset.p); return; }
       if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('leg')) { e.preventDefault(); toggleLeg(e.target.dataset.leg); }
+    });
+    $('#gamesPanel').addEventListener('click', function (e) {
+      if (!e.target.closest('[data-gp="toggle"]')) return;
+      S.gamesOpen = !S.gamesOpen; try { lsSet('parlay-tracker.gamesopen.v1', S.gamesOpen ? '1' : '0'); } catch (x) { /* ignore */ }
+      renderGames();
     });
     $('#pending').addEventListener('click', function (e) {
       const b = e.target.closest('[data-pact]'); if (!b) return;

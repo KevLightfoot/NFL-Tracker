@@ -208,3 +208,19 @@ code { background: #0e1520; padding: 1px 5px; border-radius: 5px; font-size: 12p
   .pf { align-items: flex-start; }
   .pf .btns { flex-wrap: wrap; }
 }
+/* ---------- all-games dropdown ---------- */
+.games-panel { margin-top: 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); overflow: hidden; }
+.games-panel[hidden], .gp-body[hidden] { display: none; }
+.gp-head { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px; background: linear-gradient(180deg, #162234, #121a27); border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.gp-head b { display: block; font-size: 16px; }
+.gp-head small { display: block; color: var(--muted); font-size: 12px; margin-top: 1px; }
+.gp-head .chev { transform: rotate(45deg) translate(-2px, -2px); }
+.gp-head[aria-expanded="true"] .chev { transform: rotate(-135deg) translate(-2px, -2px); }
+.gp-row { padding: 12px 14px; border-top: 1px solid var(--line); }
+.gp-main { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.gp-teams { font-weight: 700; font-size: 16px; font-variant-numeric: tabular-nums; }
+.gp-status { color: var(--muted); font-size: 12.5px; }
+.gp-status.live { color: #fbbf24; font-weight: 700; }
+.gp-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.gp-chip { font-size: 11.5px; padding: 3px 9px; border-radius: 999px; background: #223048; color: #9db0cc; }
+ 
