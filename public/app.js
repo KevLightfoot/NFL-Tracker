@@ -92,6 +92,7 @@
   function acctRender() {
     const box = $('#acct'); if (!box) return;
     box.hidden = !C.cloud;
+    $('#setTitle').textContent = !C.cloud ? 'Settings' : C.cloud.user ? 'Account' : 'Sign in or create account';
     if (!C.cloud) return;
     const u = C.cloud.user;
     $('#acctOut').hidden = !!u; $('#acctIn').hidden = !u;
@@ -380,7 +381,7 @@
     let html = '', cls = 'banner';
     if (S.serverDown) { cls += ' error'; html = 'Can’t reach the Parlay Tracker server. Start it with <code>npm start</code> and open <b>http://localhost:3000</b> (don’t open the HTML file directly).'; }
     else if (S.fetchError) { cls += ' error'; html = 'Live scores unavailable right now: ' + esc(S.fetchError) + ' — retrying automatically.'; }
-    else if (!S.config.hasServerKey && !lsGet(LS_KEY)) { html = 'Add your OpenAI API key to read screenshots. <button class="btn small" id="bannerKey">Open Settings</button>'; }
+    else if (S.config.hasServerKey === false && !lsGet(LS_KEY)) { html = 'Slip reading isn’t set up yet: the server has no OPENAI_API_KEY.'; }
     else if (C.cloud && !C.cloud.user) { html = 'Sign in to sync your slips and portfolio across devices. <button class="btn small" id="bannerKey">Open Settings</button>'; }
     b.className = cls; b.hidden = !html; b.innerHTML = html;
   }
@@ -638,12 +639,6 @@
       if (!p.legs.length) S.parlays = S.parlays.filter(function (x) { return x.id !== p.id; });
       $('#dlgLeg').close('cancel'); save(); render(); renderPending(); startDemoClock();
     });
-    $('#dlgSettings').addEventListener('close', function () {
-      if ($('#dlgSettings').returnValue === 'save') {
-        const k = $('#setKey').value.trim();
-        lsSet(LS_KEY, k); renderBanner(); toast(k ? 'API key saved in this browser.' : 'API key cleared.');
-      }
-    });
     $('#btnClearAll').addEventListener('click', function () {
       if (!confirm('Delete ALL tracked bets?')) return;
       S.parlays = []; S.games = {}; S.expanded.clear(); save(); render(); renderPending(); $('#dlgSettings').close('cancel'); clearInterval(S.demoTimer);
@@ -709,11 +704,10 @@
     $('#banner').addEventListener('click', function (e) { if (e.target.id === 'bannerKey') $('#btnSettings').click(); });
 
     $('#btnRefresh').addEventListener('click', function () { refreshAll(); });
-    $('#btnSettings').addEventListener('click', function () { $('#setKey').value = lsGet(LS_KEY) || ''; $('#dlgSettings').returnValue = ''; acctRender(); $('#dlgSettings').showModal(); });
+    $('#btnSettings').addEventListener('click', function () { $('#dlgSettings').returnValue = ''; acctRender(); $('#dlgSettings').showModal(); });
     $('#acctSignIn').addEventListener('click', function () { acctDo('in'); });
     $('#acctSignUp').addEventListener('click', function () { acctDo('up'); });
     $('#acctSignOut').addEventListener('click', async function () { await C.cloud.signOut(); C.state = 'off'; C.last = null; acctRender(); renderBanner(); toast('Signed out. Your data stays in the cloud.'); });
-    $('#acctSync').addEventListener('click', function () { syncAll(); });
     $('#acctPass').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); acctDo('in'); } });
     $('#acctEmail').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('#acctPass').focus(); } });
     document.addEventListener('visibilitychange', function () { if (!document.hidden) { if (S.parlays.length) refreshAll(); syncAll(); } });
