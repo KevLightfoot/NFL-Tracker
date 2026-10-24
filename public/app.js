@@ -6,11 +6,11 @@
   const esc = function (s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; });
   };
-  const LS_BETS = 'parlay-tracker.v1', LS_KEY = 'parlay-tracker.apiKey';
+  const LS_COLLAPSED = 'parlay-tracker.collapsed.v1', LS_BETS = 'parlay-tracker.v1', LS_KEY = 'parlay-tracker.apiKey';
   // GitHub Pages frontend talks to the Render API. Keep this URL public; never put API keys here.
   const API_BASE = 'https://nfl-parlay-tracker.onrender.com';
-  const S = { parlays: [], games: {}, gamesList: [], expanded: new Set(), pending: [], config: {}, timer: null, demoTimer: null, lastUpdate: null, busy: false, again: false, fetchError: null, serverDown: false };
-
+  const S = { parlays: [], games: {}, gamesList: [], expanded: new Set(), collapsed: new Set(), pending: [], config: {}, timer: null, demoTimer: null, lastUpdate: null, busy: false, again: false, fetchError: null, serverDown: false };
+ 
   /* ---------------- storage ---------------- */
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } }
@@ -21,15 +21,26 @@
     S.parlays.forEach(function (p) { (p.legs || []).forEach(fixTdLeg); }); // repair slips saved before this fix
     save();
   }
+  try { S.collapsed = new Set(JSON.parse(lsGet(LS_COLLAPSED) || '[]')); } catch (e) { S.collapsed = new Set(); }
+  function saveCollapsed() { try { lsSet(LS_COLLAPSED, JSON.stringify(Array.from(S.collapsed))); } catch (e) { /* ignore */ } }
+  function toggleParlay(pid) {
+    const art = document.querySelector('.parlay[data-p="' + pid + '"]'); if (!art) return;
+    const collapse = !S.collapsed.has(pid);
+    if (collapse) S.collapsed.add(pid); else S.collapsed.delete(pid);
+    saveCollapsed();
+    art.classList.toggle('collapsed', collapse);
+    const body = art.querySelector('.pbody'); if (body) body.hidden = collapse;
+    const ph = art.querySelector('.ph'); if (ph) ph.setAttribute('aria-expanded', String(!collapse));
+  }
   function save() { lsSet(LS_BETS, JSON.stringify(S.parlays)); }
   const uid = function () { return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-3); };
-
+ 
   function toast(msg) {
     const el = document.createElement('div');
     el.className = 'toast'; el.textContent = msg; document.body.appendChild(el);
     setTimeout(function () { el.remove(); }, 3800);
   }
-
+ 
   /* ---------------- api ---------------- */
   let wakePromise = null;
   async function wakeBackend() {
@@ -65,13 +76,13 @@
     if (!res.ok) throw new Error(j.error || ('Server error ' + res.status));
     return j;
   }
-
+ 
   async function fetchGame(id, league) {
     if (Demo.isDemoId(id)) return Demo.getGame(id);
     const j = await api('/api/game/' + encodeURIComponent(id) + (league ? '?league=' + league : ''));
     return j.game;
   }
-
+ 
   /* ---------------- formatting ---------------- */
   const money = function (n) { return n == null || n === '' || isNaN(n) ? '—' : Number(n).toLocaleString('en-US', { style: 'currency', currency: 'USD' }); };
   const num = function (v) {
@@ -80,7 +91,7 @@
     return isFinite(x) ? x : null;
   };
   const BET_LABEL = { parlay: 'Parlay', same_game_parlay: 'Same Game Parlay', single: 'Single', round_robin: 'Round Robin', teaser: 'Teaser', other: 'Bet' };
-
+ 
   /* Underdog/PrizePicks-style wording ("Higher 0.5 Anytime TD") often comes back as a generic prop with an
      unknown stat. Re-map touchdown-scorer legs from the slip text so they always track. */
   function fixTdLeg(leg) {
@@ -96,7 +107,7 @@
     }
     return leg;
   }
-
+ 
   /* ---------------- build parlays from parse output ---------------- */
   function normLeg(l) {
     const leg = {
@@ -111,7 +122,7 @@
     if (leg.market === 'anytime_td') leg.side = 'yes';
     return leg;
   }
-
+ 
   function buildParlay(bet, thumb) {
     const wager = num(bet.wager);
     let payout = num(bet.payout);
@@ -123,14 +134,14 @@
       thumb: thumb || null, legs: (bet.legs || []).map(normLeg),
     };
   }
-
+ 
   /* ---------------- rendering ---------------- */
   function resultsFor(p) {
     return p.legs.map(function (l) { return E.evaluateLeg(l, S.games[l.gameId] || null); });
   }
-
+ 
   const BADGE = { hit: '✓', miss: '✕', push: '–', void: '∅', unresolved: '?', live: '', pending: '' };
-
+ 
   function barHTML(leg, r) {
     const pct = Math.max(0, Math.min(100, Math.round(r.progress * 1000) / 10));
     const under = leg.side === 'under';
@@ -142,7 +153,7 @@
       '<div class="' + cls + '" style="width:' + pct + '%"></div>' +
       '<div class="bar-label"><span><b>' + esc(r.valueText) + '</b> / ' + esc(r.targetText) + ' ' + esc(r.unit || '') + '</span>' + right + '</div></div>';
   }
-
+ 
   function legHTML(p, leg, r) {
     let mid = '';
     if (r.kind === 'bar' && r.state !== 'unresolved') mid = barHTML(leg, r);
@@ -178,7 +189,7 @@
       '</span></div>' +
       more + '</div></li>';
   }
-
+ 
   function parlayHTML(p) {
     const results = resultsFor(p);
     const sum = E.summarize(results);
@@ -188,14 +199,17 @@
     const segs = results.map(function (r) { return '<i class="seg ' + (['hit', 'miss', 'live', 'push', 'void'].indexOf(r.state) >= 0 ? r.state : '') + '"></i>'; }).join('');
     const warns = (p.warnings || []).length ? '<div class="hint" style="color:#fbbf24;margin-top:8px">⚠ ' + p.warnings.map(esc).join(' · ') + '</div>' : '';
     const upd = p.demo ? 'Demo · simulated games' : (S.lastUpdate ? 'Updated ' + new Date(S.lastUpdate).toLocaleTimeString() : 'Waiting for data…');
-    return '<article class="parlay p-' + sum.status + '" data-p="' + p.id + '">' +
-      '<div class="ph"><div class="ph-top"><div class="ph-title">' + title + '</div><span class="pill ' + pill[0] + '">' + esc(pill[1]) + '</span></div>' +
+    const collapsed = S.collapsed.has(p.id);
+    return '<article class="parlay p-' + sum.status + (collapsed ? ' collapsed' : '') + '" data-p="' + p.id + '">' +
+      '<div class="ph" role="button" tabindex="0" aria-expanded="' + !collapsed + '"><div class="ph-top"><div class="ph-title">' + title + '</div><span class="pill ' + pill[0] + '">' + esc(pill[1]) + '</span><span class="chev" aria-hidden="true"></span></div>' +
+ 
       '<div class="money"><div><label>WAGER</label><b>' + money(p.wager) + '</b></div><div class="payout"><label>PAYOUT</label><b>' + money(p.payout) + '</b></div><div><label>ODDS</label><b>' + esc(p.odds || '—') + '</b></div></div>' +
       '<div class="segs">' + segs + '</div>' + warns + '</div>' +
+      '<div class="pbody"' + (collapsed ? ' hidden' : '') + '>' +
       '<ul class="legs">' + p.legs.map(function (l, i) { return legHTML(p, l, results[i]); }).join('') + '</ul>' +
-      '<div class="pf"><span>' + esc(upd) + '</span><span class="btns"><button class="btn small" data-act="edit-bet" data-p="' + p.id + '">Edit bet</button><button class="btn small danger" data-act="clear-slip" data-p="' + p.id + '">Clear slip</button></span></div></article>';
+      '<div class="pf"><span>' + esc(upd) + '</span><span class="btns"><button class="btn small" data-act="edit-bet" data-p="' + p.id + '">Edit bet</button><button class="btn small danger" data-act="clear-slip" data-p="' + p.id + '">Clear slip</button></span></div></div></article>';
   }
-
+ 
   function render() {
     const root = $('#parlays');
     const prev = {};
@@ -216,7 +230,7 @@
     if (focusId) { const el = root.querySelector('.leg[data-leg="' + focusId + '"]'); if (el) el.focus({ preventScroll: true }); }
     $('#empty').hidden = S.parlays.length > 0 || S.pending.length > 0;
   }
-
+ 
   function renderPending() {
     $('#pending').innerHTML = S.pending.map(function (x) {
       return '<div class="pending-card' + (x.error ? ' err' : '') + '" data-pid="' + x.id + '">' +
@@ -226,7 +240,7 @@
     }).join('');
     $('#empty').hidden = S.parlays.length > 0 || S.pending.length > 0;
   }
-
+ 
   function renderBanner() {
     const b = $('#banner');
     let html = '', cls = 'banner';
@@ -235,7 +249,7 @@
     else if (!S.config.hasServerKey && !lsGet(LS_KEY)) { html = 'Add your OpenAI API key to read screenshots. <button class="btn small" id="bannerKey">Open Settings</button>'; }
     b.className = cls; b.hidden = !html; b.innerHTML = html;
   }
-
+ 
   /* ---------------- refresh loop ---------------- */
   async function refreshAll() {
     if (S.busy) { S.again = true; return; }
@@ -266,7 +280,7 @@
     render(); renderBanner(); schedule();
     if (S.again) { S.again = false; setTimeout(refreshAll, 50); }
   }
-
+ 
   function schedule() {
     clearTimeout(S.timer);
     if (!S.parlays.length) return;
@@ -279,7 +293,7 @@
     if (unresolved || S.fetchError) delay = Math.min(delay, 30000);
     S.timer = setTimeout(refreshAll, delay);
   }
-
+ 
   function startDemoClock() {
     clearInterval(S.demoTimer);
     if (!S.parlays.some(function (p) { return p.demo; })) return;
@@ -289,7 +303,7 @@
       refreshAll();
     }, 2000);
   }
-
+ 
   /* ---------------- upload ---------------- */
   function prepImage(file) {
     return new Promise(function (resolve, reject) {
@@ -327,7 +341,7 @@
       img.src = url;
     });
   }
-
+ 
   async function processGroup(entry) {
     entry.error = null; renderPending();
     try {
@@ -352,7 +366,7 @@
       renderPending();
     }
   }
-
+ 
   function handleFiles(list) {
     const files = Array.prototype.slice.call(list || []).filter(function (f) { return /^image\//.test(f.type) || /\.(png|jpe?g|webp|gif|heic|heif)$/i.test(f.name); });
     if (!files.length) { toast('That doesn’t look like an image.'); return; }
@@ -364,14 +378,14 @@
       processGroup(entry);
     });
   }
-
+ 
   /* ---------------- leg / bet actions ---------------- */
   function findLeg(pid, lid) {
     const p = S.parlays.find(function (x) { return x.id === pid; });
     const l = p && p.legs.find(function (x) { return x.id === lid; });
     return { p: p, l: l };
   }
-
+ 
   function act(name, pid, lid) {
     const f = findLeg(pid, lid), p = f.p, l = f.l;
     if (!p) return;
@@ -409,25 +423,25 @@
     }
     save(); render();
   }
-
+ 
   function toggleLeg(id) { if (S.expanded.has(id)) S.expanded.delete(id); else S.expanded.add(id); render(); }
-
+ 
   /* ---- dialogs ---- */
   let editing = null;
-
+ 
   function openBetDialog(p) {
     editing = { p: p };
     $('#bName').value = p.name || ''; $('#bWager').value = p.wager == null ? '' : p.wager; $('#bPayout').value = p.payout == null ? '' : p.payout;
     $('#bOdds').value = p.odds || ''; $('#bBook').value = p.sportsbook || '';
     $('#dlgBet').returnValue = ''; $('#dlgBet').showModal();
   }
-
+ 
   function dateLabel(iso) {
     if (!iso) return '';
     const d = new Date(iso);
     return isNaN(d) ? '' : d.toLocaleString([], { weekday: 'short', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   }
-
+ 
   async function openLegDialog(p, l) {
     editing = { p: p, l: l };
     const sel = $('#lStat');
@@ -454,7 +468,7 @@
       try { S.gamesList = (await api('/api/games')).games || []; fillGames(); } catch (e) { /* optional */ }
     }
   }
-
+ 
   function wireDialogs() {
     $('#dlgBet').addEventListener('close', function () {
       if ($('#dlgBet').returnValue !== 'save' || !editing) return;
@@ -500,7 +514,7 @@
       S.parlays = []; S.games = {}; S.expanded.clear(); save(); render(); renderPending(); $('#dlgSettings').close('cancel'); clearInterval(S.demoTimer);
     });
   }
-
+ 
   /* ---------------- init ---------------- */
   function init() {
     load();
@@ -532,14 +546,17 @@
       for (let i = 0; i < items.length; i++) if (items[i].kind === 'file' && /^image\//.test(items[i].type)) files.push(items[i].getAsFile());
       if (files.length) { e.preventDefault(); handleFiles(files); }
     });
-
+ 
     $('#parlays').addEventListener('click', function (e) {
       const btn = e.target.closest('[data-act]');
       if (btn) { e.stopPropagation(); act(btn.dataset.act, btn.dataset.p, btn.dataset.l); return; }
+      const ph = e.target.closest('.ph');
+      if (ph) { toggleParlay(ph.closest('.parlay').dataset.p); return; }
       const li = e.target.closest('.leg');
       if (li && !e.target.closest('.more')) toggleLeg(li.dataset.leg);
     });
     $('#parlays').addEventListener('keydown', function (e) {
+      if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('ph')) { e.preventDefault(); toggleParlay(e.target.closest('.parlay').dataset.p); return; }
       if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('leg')) { e.preventDefault(); toggleLeg(e.target.dataset.leg); }
     });
     $('#pending').addEventListener('click', function (e) {
@@ -550,16 +567,16 @@
       else { S.pending = S.pending.filter(function (x) { return x !== entry; }); renderPending(); }
     });
     $('#banner').addEventListener('click', function (e) { if (e.target.id === 'bannerKey') $('#btnSettings').click(); });
-
+ 
     $('#btnRefresh').addEventListener('click', function () { refreshAll(); });
     $('#btnSettings').addEventListener('click', function () { $('#setKey').value = lsGet(LS_KEY) || ''; $('#dlgSettings').returnValue = ''; $('#dlgSettings').showModal(); });
     document.addEventListener('visibilitychange', function () { if (!document.hidden && S.parlays.length) refreshAll(); });
-
+ 
     wireDialogs();
     render(); renderPending();
     api('/api/config').then(function (c) { S.config = c; renderBanner(); }).catch(function () { S.serverDown = true; renderBanner(); });
     if (S.parlays.length) { refreshAll(); startDemoClock(); }
   }
-
+ 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
