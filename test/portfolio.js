@@ -26,7 +26,12 @@ t('daily / weekly / YTD grouping and filters', () => {
   assert.strictEqual(P.group(all, 'week').find(g => g.key === '2026-10-13').entries.length, 2);
   const y = P.group(all, 'ytd', '2026'); assert.deepStrictEqual(y.map(g => g.key), ['2026-10', '2026-03']); // 2025 excluded
   assert.strictEqual(P.filter(all, { status: 'won' }).length, 2);
+  assert.strictEqual(P.filter(all, { status: 'placed' }).length, 5, 'Placed = every bet you placed, won or lost included');
   assert.strictEqual(P.filter(all, { date: '2026-10-19' })[0].status, 'lost');
   const r = P.rangeSummaries(all, '2026-10-18'); assert.strictEqual(r.today.count, 1); assert.strictEqual(r.week.count, 2); assert.strictEqual(r.ytd.count, 4);
+});
+t('entries keep their cloud-sync stamps', () => {
+  const e = P.makeEntry({ date: '2026-10-18', status: 'won', wager: 1, payout: 3, updatedAt: 123, _h: 'abc' });
+  assert.strictEqual(e.updatedAt, 123); assert.strictEqual(e._h, 'abc');
 });
 console.log('\n' + pass + ' passed, ' + fail + ' failed'); process.exit(fail ? 1 : 0);

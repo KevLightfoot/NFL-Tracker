@@ -51,7 +51,8 @@
   function filter(entries, f) {
     f = f || {};
     return entries.filter(function (e) {
-      if (f.status && f.status !== 'all' && e.status !== f.status) return false;
+      if (f.status && f.status !== 'all' && f.status !== 'placed' && e.status !== f.status) return false;   // 'placed' = every bet you placed
+
       if (f.date && e.date !== f.date) return false;
       return true;
     });
@@ -101,6 +102,7 @@
       name: o.name || '', sportsbook: o.sportsbook || '', betType: o.betType || '',
       wager: num(o.wager), payout: num(o.payout), odds: o.odds || '',
       legs: (o.legs || []).map(function (l) { return { title: String(l.title || ''), state: l.state || '', odds: l.odds || '' }; }),
+      updatedAt: o.updatedAt || 0, _h: o._h || '',   // cloud-sync stamps (see lib/cloud.js)
     };
   }
 
@@ -118,12 +120,23 @@
   const pct = function (x) { return x == null ? '—' : Math.round(x * 100) + '%'; };
   const BET_LABEL = { parlay: 'Parlay', same_game_parlay: 'Same Game Parlay', single: 'Single', round_robin: 'Round Robin', teaser: 'Teaser', other: 'Bet' };
 
-  const U = { entries: [], mode: 'day', status: 'all', date: '', view: 'tracker' };
+  const U = { entries: [], mode: 'day', status: 'placed', date: '', view: 'tracker', onSave: null };
 
   function load() {
     try { U.entries = (JSON.parse(localStorage.getItem(LS_KEY) || '[]') || []).map(makeEntry); } catch (e) { U.entries = []; }
   }
-  function save() { try { localStorage.setItem(LS_KEY, JSON.stringify(U.entries)); } catch (e) { /* storage blocked */ } }
+  function persist() { try { localStorage.setItem(LS_KEY, JSON.stringify(U.entries)); } catch (e) { /* storage blocked */ } }
+  function save() { persist(); if (U.onSave) { try { U.onSave(U.entries); } catch (e) { /* ignore */ } } }
+  /* Apply a cloud-sync result: { adopted: [entries to add/replace], dropped: [ids to remove] } */
+  function applyRemote(r) {
+    if (!r || (!r.adopted.length && !r.dropped.length)) { persist(); return; }
+    r.dropped.forEach(function (id) { U.entries = U.entries.filter(function (x) { return x.id !== id; }); });
+    r.adopted.forEach(function (raw) {
+      const it = makeEntry(raw), i = U.entries.findIndex(function (x) { return x.id === it.id; });
+      if (i >= 0) U.entries[i] = it; else U.entries.push(it);
+    });
+    persist(); if (U.view === 'portfolio') render();
+  }
   function toast(msg) {
     const el = document.createElement('div'); el.className = 'toast'; el.textContent = msg; document.body.appendChild(el);
     setTimeout(function () { el.remove(); }, 3200);
@@ -134,16 +147,16 @@
     const host = document.createElement('div');
     host.innerHTML =
       '<dialog id="dlgPfAdd"><div class="dlg">' +
-        '<h2>Add to portfolio?</h2><p class="hint" id="pfaInfo"></p>' +
+        '<h2>Did it win or lose?</h2><p class="hint" id="pfaInfo"></p>' +
         '<div class="grid3"><label>Wager ($)<input id="pfaWager" inputmode="decimal"></label>' +
         '<label>Payout ($)<input id="pfaPayout" inputmode="decimal"></label>' +
         '<label>Date<input id="pfaDate" type="date"></label></div>' +
         '<p class="pf-err" id="pfaErr" hidden></p>' +
-        '<div class="pf-choice"><button type="button" class="btn" data-pick="placed">Placed</button>' +
-        '<button type="button" class="btn win" data-pick="won">Won</button>' +
-        '<button type="button" class="btn lose" data-pick="lost">Lost</button></div>' +
+        '<div class="pf-choice"><button type="button" class="btn win" data-pick="won" aria-pressed="false">Won</button>' +
+        '<button type="button" class="btn lose" data-pick="lost" aria-pressed="false">Lost</button></div>' +
         '<div class="row"><button type="button" class="btn danger" data-pick="discard">Clear without saving</button><span class="grow"></span>' +
-        '<button type="button" class="btn ghost" data-pick="cancel">Cancel</button></div>' +
+        '<button type="button" class="btn ghost" data-pick="cancel">Cancel</button>' +
+        '<button type="button" class="btn primary" id="pfaSave" data-pick="save" disabled>Save</button></div>' +
       '</div></dialog>' +
       '<dialog id="dlgPfEdit"><div class="dlg">' +
         '<h2 id="pfeTitle">Edit slip</h2>' +
@@ -172,18 +185,29 @@
     $('#pfaPayout').value = p.payout == null ? '' : p.payout;
     $('#pfaDate').value = today();
     $('#pfaErr').hidden = true;
-    const suggest = info.status === 'won' ? 'won' : info.status === 'lost' ? 'lost' : 'placed';
-    dlg.querySelectorAll('[data-pick]').forEach(function (b) { b.classList.toggle('suggest', b.dataset.pick === suggest); });
+    // Pre-select what the tracker says if the slip is already settled; otherwise you must pick Won or Lost.
+    setPick(info.status === 'won' ? 'won' : info.status === 'lost' ? 'lost' : '');
     dlg.showModal();
+  }
+
+  function setPick(v) {
+    if (addCtx) addCtx.pick = v;
+    document.querySelectorAll('#dlgPfAdd .pf-choice [data-pick]').forEach(function (b) {
+      const on = b.dataset.pick === v; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on));
+    });
+    const sv = $('#pfaSave'); if (sv) sv.disabled = !v;
+    const err = $('#pfaErr'); if (err) err.hidden = true;
   }
 
   function wireAdd() {
     const dlg = $('#dlgPfAdd');
     dlg.addEventListener('click', function (e) {
       const b = e.target.closest('[data-pick]'); if (!b || !addCtx) return;
-      const pick = b.dataset.pick, ctx = addCtx, p = ctx.info.parlay;
-      if (pick === 'cancel') { dlg.close(); addCtx = null; return; }
-      if (pick === 'discard') { dlg.close(); addCtx = null; ctx.done(); return; }
+      const act = b.dataset.pick, ctx = addCtx, p = ctx.info.parlay;
+      if (act === 'won' || act === 'lost') { setPick(act); return; }
+      if (act === 'cancel') { dlg.close(); addCtx = null; return; }
+      if (act === 'discard') { dlg.close(); addCtx = null; ctx.done(); return; }
+      const pick = ctx.pick; if (act !== 'save' || (pick !== 'won' && pick !== 'lost')) return;
       const wager = num($('#pfaWager').value), payout = num($('#pfaPayout').value), date = $('#pfaDate').value || today();
       const err = $('#pfaErr');
       if (wager == null) { err.textContent = 'Enter the wager so the money totals are right.'; err.hidden = false; return; }
@@ -192,7 +216,7 @@
         date: date, status: pick, name: p.name, sportsbook: p.sportsbook, betType: p.betType, wager: wager, payout: payout, odds: p.odds, legs: ctx.info.legs,
       }));
       save(); dlg.close(); addCtx = null; render();
-      toast('Saved to portfolio as ' + pick.toUpperCase() + '.');
+      toast('Saved to portfolio — ' + pick.toUpperCase() + '.');
       ctx.done();
     });
   }
@@ -236,7 +260,7 @@
   function statCard(title, s) {
     const cls = s.net > 0 ? 'pos' : s.net < 0 ? 'neg' : '';
     return '<div class="pf-card"><label>' + title + '</label><b class="' + cls + '">' + signed(s.net) + '</b>' +
-      '<div class="sub">' + s.won + 'W · ' + s.lost + 'L' + (s.placed ? ' · ' + s.placed + ' placed (' + usd(s.atRisk) + ' at risk)' : '') + '</div>' +
+      '<div class="sub">' + s.won + 'W · ' + s.lost + 'L' + (s.placed ? ' · ' + s.placed + ' pending (' + usd(s.atRisk) + ' at risk)' : '') + '</div>' +
       '<div class="sub2">' + moneyLine(s) + '</div></div>';
   }
 
@@ -266,7 +290,7 @@
     const list = filter(U.entries, { status: U.status, date: U.date });
     const groups = group(list, U.mode);
     const modes = [['day', 'Daily'], ['week', 'Weekly'], ['ytd', 'YTD']];
-    const stats = [['all', 'All'], ['placed', 'Placed'], ['won', 'Won'], ['lost', 'Lost']];
+    const stats = [['placed', 'Placed'], ['won', 'Won'], ['lost', 'Lost']];
     let html =
       '<div class="pf-cards">' + statCard('Today', R.today) + statCard('This week', R.week) + statCard('YTD ' + new Date().getFullYear(), R.ytd) + '</div>' +
       '<div class="pf-ytd">YTD record <b>' + R.ytd.won + '–' + R.ytd.lost + '</b> · win rate <b>' + pct(R.ytd.winRate) + '</b> · ROI <b>' + pct(R.ytd.roi) + '</b> · wagered <b>' + usd(R.ytd.wagered) + '</b></div>' +
@@ -275,10 +299,10 @@
       '<div class="pf-date"><label>Jump to date <input type="date" id="pfDate" value="' + esc(U.date) + '"></label>' + (U.date ? '<button class="btn small" id="pfDateClear">Clear</button>' : '') + '</div>' +
       '<div class="pf-tools"><button class="btn small primary" id="pfLog">+ Log bet</button><button class="btn small" id="pfCsv">Export CSV</button></div></div>';
 
-    if (!groups.length) html += '<p class="empty">' + (U.entries.length ? 'No slips match these filters.' : 'No slips saved yet. Press <b>Clear slip</b> on a tracked slip and choose Placed, Won or Lost — or tap <b>+ Log bet</b>.') + '</p>';
+    if (!groups.length) html += '<p class="empty">' + (U.entries.length ? 'No slips match these filters.' : 'No slips saved yet. Press <b>Clear slip</b> on a tracked slip and choose Won or Lost — or tap <b>+ Log bet</b>.') + '</p>';
     groups.forEach(function (g) {
       const s = g.sum, cls = s.net > 0 ? 'pos' : s.net < 0 ? 'neg' : '';
-      html += '<section class="pf-group"><header><div><h3>' + esc(g.label) + '</h3><span class="sub">' + s.count + ' slip' + (s.count === 1 ? '' : 's') + ' · ' + s.won + 'W ' + s.lost + 'L' + (s.placed ? ' ' + s.placed + ' placed' : '') + '</span></div>' +
+      html += '<section class="pf-group"><header><div><h3>' + esc(g.label) + '</h3><span class="sub">' + s.count + ' slip' + (s.count === 1 ? '' : 's') + ' · ' + s.won + 'W ' + s.lost + 'L' + (s.placed ? ' ' + s.placed + ' pending' : '') + '</span></div>' +
         '<div class="gt"><b class="' + cls + '">' + signed(s.net) + '</b><span class="sub2">' + moneyLine(s) + '</span></div></header>' +
         g.entries.map(entryHTML).join('') + '</section>';
     });
@@ -331,5 +355,5 @@
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 
-  return Object.assign({ WEEK_START: WEEK_START, promptSave: promptSave, render: render, showView: showView, entries: function () { return U.entries; } }, logic);
+  return Object.assign({ WEEK_START: WEEK_START, promptSave: promptSave, render: render, showView: showView, entries: function () { return U.entries; }, applyRemote: applyRemote, onSave: function (fn) { U.onSave = fn; } }, logic);
 });

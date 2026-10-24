@@ -10,7 +10,7 @@
   // GitHub Pages frontend talks to the Render API. Keep this URL public; never put API keys here.
   const API_BASE = 'https://nfl-parlay-tracker.onrender.com';
   const S = { parlays: [], games: {}, gamesList: [], expanded: new Set(), collapsed: new Set(), gamesOpen: false, pending: [], config: {}, timer: null, demoTimer: null, lastUpdate: null, busy: false, again: false, fetchError: null, serverDown: false };
- 
+
   /* ---------------- storage ---------------- */
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } }
@@ -33,15 +33,106 @@
     const body = art.querySelector('.pbody'); if (body) body.hidden = collapse;
     const ph = art.querySelector('.ph'); if (ph) ph.setAttribute('aria-expanded', String(!collapse));
   }
-  function save() { lsSet(LS_BETS, JSON.stringify(S.parlays)); }
+  function save() { lsSet(LS_BETS, JSON.stringify(S.parlays)); cloudDirty(); }
+
+  /* ---------------- cloud sync (Supabase) ---------------- */
+  // Local-first: everything still works from this browser's storage; when signed in, slips and the portfolio are mirrored
+  // to Supabase and pulled back on every device. See lib/cloud.js and supabase/schema.sql.
+  const C = { cloud: null, slips: null, pf: null, timer: null, busy: false, again: false, state: 'off', msg: '', last: null };
+
+  function cloudInit() {
+    const cfg = window.PT_CONFIG || {};
+    if (!cfg.SUPABASE_URL || !cfg.SUPABASE_ANON_KEY || !window.supabase || !window.PTCloud) return;
+    try {
+      C.cloud = window.PTCloud.create({ client: window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY), storage: window.localStorage });
+    } catch (e) { C.cloud = null; return; }
+    C.slips = C.cloud.collection('slips'); C.pf = C.cloud.collection('portfolio');
+    if (window.Portfolio) Portfolio.onSave(cloudDirty);
+    C.cloud.onAuth(function () { acctRender(); renderBanner(); if (C.cloud.user) syncAll(); });
+    C.cloud.ready.then(function () { acctRender(); renderBanner(); if (C.cloud.user) syncAll(); });
+    setInterval(function () { if (!document.hidden && C.cloud && C.cloud.user) syncAll(); }, 30000);
+  }
+
+  function cloudDirty() {
+    if (!C.cloud || !C.cloud.user) return;
+    clearTimeout(C.timer); C.timer = setTimeout(syncAll, 700);
+  }
+
+  function setCloud(state, msg) { C.state = state; C.msg = msg || ''; if (state === 'ok') C.last = Date.now(); acctRender(); }
+
+  function applySlips(r) {
+    if (!r || !r.changed) return;
+    r.dropped.forEach(function (id) { S.parlays = S.parlays.filter(function (p) { return p.id !== id; }); });
+    let added = false;
+    r.adopted.forEach(function (it) {
+      const i = S.parlays.findIndex(function (p) { return p.id === it.id; });
+      if (i >= 0) S.parlays[i] = it; else { S.parlays.push(it); added = true; }
+    });
+    if (added) S.parlays.sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
+    render(); renderPending();
+    if (S.parlays.length) { refreshAll(); startDemoClock(); }
+    else { S.games = {}; clearTimeout(S.timer); }
+  }
+
+  async function syncAll() {
+    if (!C.cloud || !C.cloud.user) return;
+    if (C.busy) { C.again = true; return; }
+    C.busy = true; setCloud('syncing');
+    try {
+      const r = await C.slips.sync(S.parlays.slice());
+      applySlips(r);
+      lsSet(LS_BETS, JSON.stringify(S.parlays));
+      if (window.Portfolio) Portfolio.applyRemote(await C.pf.sync(Portfolio.entries().slice()));
+      setCloud('ok');
+    } catch (e) { setCloud('error', (e && e.message) || String(e)); }
+    C.busy = false;
+    if (C.again) { C.again = false; cloudDirty(); }
+  }
+
+  function acctRender() {
+    const box = $('#acct'); if (!box) return;
+    box.hidden = !C.cloud;
+    if (!C.cloud) return;
+    const u = C.cloud.user;
+    $('#acctOut').hidden = !!u; $('#acctIn').hidden = !u;
+    $('#acctUser').textContent = u ? String(u.email || '').split('@')[0] : '';
+    const m = $('#acctMsg'); m.className = 'hint';
+    if (u) {
+      if (C.state === 'syncing') m.textContent = 'Syncing…';
+      else if (C.state === 'error') { m.textContent = 'Sync problem: ' + C.msg + ' — will retry.'; m.className = 'hint err'; }
+      else if (C.last) { m.textContent = 'Synced ' + new Date(C.last).toLocaleTimeString() + '.'; m.className = 'hint ok'; }
+      else m.textContent = '';
+    } else if (C.state === 'authError') { m.textContent = C.msg; m.className = 'hint err'; }
+    else if (C.state === 'confirm') { m.textContent = C.msg; m.className = 'hint ok'; }
+    else m.textContent = '';
+  }
+
+  async function acctDo(kind) {
+    // Supabase logs in by email, so a username becomes a private pseudo-email (nothing is ever sent to it).
+    const uname = $('#acctEmail').value.trim().toLowerCase(), pass = $('#acctPass').value;
+    if (!/^[a-z0-9][a-z0-9._-]{1,18}[a-z0-9]$/.test(uname)) { C.state = 'authError'; C.msg = 'Username: 3–20 letters, numbers, dot, dash or underscore.'; return acctRender(); }
+    if (pass.length < 6) { C.state = 'authError'; C.msg = 'Password must be at least 6 characters.'; return acctRender(); }
+    const email = uname + '@' + ((window.PT_CONFIG || {}).EMAIL_DOMAIN || 'gmail.com');
+    const btns = ['#acctSignIn', '#acctSignUp'].map($); btns.forEach(function (b) { b.disabled = true; });
+    try {
+      if (kind === 'in') await C.cloud.signIn(email, pass);
+      else {
+        const r = await C.cloud.signUp(email, pass);
+        if (r.needsConfirm) { C.state = 'confirm'; C.msg = 'Check your email and click the confirmation link, then sign in.'; }
+      }
+      if (C.cloud.user) { $('#acctPass').value = ''; toast('Signed in — syncing your slips and portfolio.'); }
+    } catch (e) { C.state = 'authError'; C.msg = /invalid login/i.test((e && e.message) || '') ? 'Wrong username or password.' : /already registered/i.test((e && e.message) || '') ? 'That username is taken.' : ((e && e.message) || 'Could not sign in.'); }
+    btns.forEach(function (b) { b.disabled = false; });
+    acctRender();
+  }
   const uid = function () { return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-3); };
- 
+
   function toast(msg) {
     const el = document.createElement('div');
     el.className = 'toast'; el.textContent = msg; document.body.appendChild(el);
     setTimeout(function () { el.remove(); }, 3800);
   }
- 
+
   /* ---------------- api ---------------- */
   let wakePromise = null;
   async function wakeBackend() {
@@ -77,13 +168,13 @@
     if (!res.ok) throw new Error(j.error || ('Server error ' + res.status));
     return j;
   }
- 
+
   async function fetchGame(id, league) {
     if (Demo.isDemoId(id)) return Demo.getGame(id);
     const j = await api('/api/game/' + encodeURIComponent(id) + (league ? '?league=' + league : ''));
     return j.game;
   }
- 
+
   /* ---------------- formatting ---------------- */
   const money = function (n) { return n == null || n === '' || isNaN(n) ? '—' : Number(n).toLocaleString('en-US', { style: 'currency', currency: 'USD' }); };
   const num = function (v) {
@@ -92,7 +183,7 @@
     return isFinite(x) ? x : null;
   };
   const BET_LABEL = { parlay: 'Parlay', same_game_parlay: 'Same Game Parlay', single: 'Single', round_robin: 'Round Robin', teaser: 'Teaser', other: 'Bet' };
- 
+
   /* Underdog/PrizePicks-style wording ("Higher 0.5 Anytime TD") often comes back as a generic prop with an
      unknown stat. Re-map touchdown-scorer legs from the slip text so they always track. */
   function fixTdLeg(leg) {
@@ -108,7 +199,7 @@
     }
     return leg;
   }
- 
+
   /* ---------------- build parlays from parse output ---------------- */
   function normLeg(l) {
     const leg = {
@@ -123,7 +214,7 @@
     if (leg.market === 'anytime_td') leg.side = 'yes';
     return leg;
   }
- 
+
   function buildParlay(bet, thumb) {
     const wager = num(bet.wager);
     let payout = num(bet.payout);
@@ -135,14 +226,14 @@
       thumb: thumb || null, legs: (bet.legs || []).map(normLeg),
     };
   }
- 
+
   /* ---------------- rendering ---------------- */
   function resultsFor(p) {
     return p.legs.map(function (l) { return E.evaluateLeg(l, S.games[l.gameId] || null); });
   }
- 
+
   const BADGE = { hit: '✓', miss: '✕', push: '–', void: '∅', unresolved: '?', live: '', pending: '' };
- 
+
   function barHTML(leg, r) {
     const pct = Math.max(0, Math.min(100, Math.round(r.progress * 1000) / 10));
     const under = leg.side === 'under';
@@ -154,7 +245,7 @@
       '<div class="' + cls + '" style="width:' + pct + '%"></div>' +
       '<div class="bar-label"><span><b>' + esc(r.valueText) + '</b> / ' + esc(r.targetText) + ' ' + esc(r.unit || '') + '</span>' + right + '</div></div>';
   }
- 
+
   function legHTML(p, leg, r) {
     let mid = '';
     if (r.kind === 'bar' && r.state !== 'unresolved') mid = barHTML(leg, r);
@@ -190,7 +281,7 @@
       '</span></div>' +
       more + '</div></li>';
   }
- 
+
   /* Legs in kickoff order (earliest first); legs with no matched game keep their slip order at the end. */
   function kickoffOrder(p) {
     const t = function (l) { const g = S.games[l.gameId]; const v = g && g.date ? Date.parse(g.date) : NaN; return isNaN(v) ? Infinity : v; };
@@ -198,7 +289,7 @@
       .sort(function (a, b) { return a.t === b.t ? a.i - b.i : (a.t < b.t ? -1 : 1); })
       .map(function (x) { return x.i; });
   }
- 
+
   function parlayHTML(p) {
     const order = kickoffOrder(p);
     const all = resultsFor(p);
@@ -214,14 +305,14 @@
     const collapsed = S.collapsed.has(p.id);
     return '<article class="parlay p-' + sum.status + (collapsed ? ' collapsed' : '') + '" data-p="' + p.id + '">' +
       '<div class="ph" role="button" tabindex="0" aria-expanded="' + !collapsed + '"><div class="ph-top"><div class="ph-title">' + title + '</div><span class="pill ' + pill[0] + '">' + esc(pill[1]) + '</span><span class="chev" aria-hidden="true"></span></div>' +
- 
+
       '<div class="money"><div><label>WAGER</label><b>' + money(p.wager) + '</b></div><div class="payout"><label>PAYOUT</label><b>' + money(p.payout) + '</b></div><div><label>ODDS</label><b>' + esc(p.odds || '—') + '</b></div></div>' +
       '<div class="segs">' + segs + '</div>' + warns + '</div>' +
       '<div class="pbody"' + (collapsed ? ' hidden' : '') + '>' +
       '<ul class="legs">' + legsSorted.map(function (l, i) { return legHTML(p, l, results[i]); }).join('') + '</ul>' +
       '<div class="pf"><span>' + esc(upd) + '</span><span class="btns"><button class="btn small" data-act="edit-bet" data-p="' + p.id + '">Edit bet</button><button class="btn small danger" data-act="clear-slip" data-p="' + p.id + '">Clear slip</button></span></div></div></article>';
   }
- 
+
   /* ---------------- all-games dropdown (only when slips cover different games) ---------------- */
   function renderGames() {
     const el = $('#gamesPanel'); if (!el) return;
@@ -251,7 +342,7 @@
           '<div class="gp-chips">' + r.slips.map(function (pi) { return '<span class="gp-chip">' + esc(names[pi]) + '</span>'; }).join('') + '</div></div>';
       }).join('') + '</div>';
   }
- 
+
   function render() {
     const root = $('#parlays');
     const prev = {};
@@ -273,7 +364,7 @@
     $('#empty').hidden = S.parlays.length > 0 || S.pending.length > 0;
     renderGames();
   }
- 
+
   function renderPending() {
     $('#pending').innerHTML = S.pending.map(function (x) {
       return '<div class="pending-card' + (x.error ? ' err' : '') + '" data-pid="' + x.id + '">' +
@@ -283,16 +374,17 @@
     }).join('');
     $('#empty').hidden = S.parlays.length > 0 || S.pending.length > 0;
   }
- 
+
   function renderBanner() {
     const b = $('#banner');
     let html = '', cls = 'banner';
     if (S.serverDown) { cls += ' error'; html = 'Can’t reach the Parlay Tracker server. Start it with <code>npm start</code> and open <b>http://localhost:3000</b> (don’t open the HTML file directly).'; }
     else if (S.fetchError) { cls += ' error'; html = 'Live scores unavailable right now: ' + esc(S.fetchError) + ' — retrying automatically.'; }
     else if (!S.config.hasServerKey && !lsGet(LS_KEY)) { html = 'Add your OpenAI API key to read screenshots. <button class="btn small" id="bannerKey">Open Settings</button>'; }
+    else if (C.cloud && !C.cloud.user) { html = 'Sign in to sync your slips and portfolio across devices. <button class="btn small" id="bannerKey">Open Settings</button>'; }
     b.className = cls; b.hidden = !html; b.innerHTML = html;
   }
- 
+
   /* ---------------- refresh loop ---------------- */
   async function refreshAll() {
     if (S.busy) { S.again = true; return; }
@@ -323,7 +415,7 @@
     render(); renderBanner(); schedule();
     if (S.again) { S.again = false; setTimeout(refreshAll, 50); }
   }
- 
+
   function schedule() {
     clearTimeout(S.timer);
     if (!S.parlays.length) return;
@@ -336,7 +428,7 @@
     if (unresolved || S.fetchError) delay = Math.min(delay, 30000);
     S.timer = setTimeout(refreshAll, delay);
   }
- 
+
   function startDemoClock() {
     clearInterval(S.demoTimer);
     if (!S.parlays.some(function (p) { return p.demo; })) return;
@@ -346,7 +438,7 @@
       refreshAll();
     }, 2000);
   }
- 
+
   /* ---------------- upload ---------------- */
   function prepImage(file) {
     return new Promise(function (resolve, reject) {
@@ -384,7 +476,7 @@
       img.src = url;
     });
   }
- 
+
   async function processGroup(entry) {
     entry.error = null; renderPending();
     try {
@@ -409,7 +501,7 @@
       renderPending();
     }
   }
- 
+
   function handleFiles(list) {
     const files = Array.prototype.slice.call(list || []).filter(function (f) { return /^image\//.test(f.type) || /\.(png|jpe?g|webp|gif|heic|heif)$/i.test(f.name); });
     if (!files.length) { toast('That doesn’t look like an image.'); return; }
@@ -421,14 +513,14 @@
       processGroup(entry);
     });
   }
- 
+
   /* ---------------- leg / bet actions ---------------- */
   function findLeg(pid, lid) {
     const p = S.parlays.find(function (x) { return x.id === pid; });
     const l = p && p.legs.find(function (x) { return x.id === lid; });
     return { p: p, l: l };
   }
- 
+
   function act(name, pid, lid) {
     const f = findLeg(pid, lid), p = f.p, l = f.l;
     if (!p) return;
@@ -466,25 +558,25 @@
     }
     save(); render();
   }
- 
+
   function toggleLeg(id) { if (S.expanded.has(id)) S.expanded.delete(id); else S.expanded.add(id); render(); }
- 
+
   /* ---- dialogs ---- */
   let editing = null;
- 
+
   function openBetDialog(p) {
     editing = { p: p };
     $('#bName').value = p.name || ''; $('#bWager').value = p.wager == null ? '' : p.wager; $('#bPayout').value = p.payout == null ? '' : p.payout;
     $('#bOdds').value = p.odds || ''; $('#bBook').value = p.sportsbook || '';
     $('#dlgBet').returnValue = ''; $('#dlgBet').showModal();
   }
- 
+
   function dateLabel(iso) {
     if (!iso) return '';
     const d = new Date(iso);
     return isNaN(d) ? '' : d.toLocaleString([], { weekday: 'short', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   }
- 
+
   async function openLegDialog(p, l) {
     editing = { p: p, l: l };
     const sel = $('#lStat');
@@ -511,7 +603,7 @@
       try { S.gamesList = (await api('/api/games')).games || []; fillGames(); } catch (e) { /* optional */ }
     }
   }
- 
+
   function wireDialogs() {
     $('#dlgBet').addEventListener('close', function () {
       if ($('#dlgBet').returnValue !== 'save' || !editing) return;
@@ -557,7 +649,7 @@
       S.parlays = []; S.games = {}; S.expanded.clear(); save(); render(); renderPending(); $('#dlgSettings').close('cancel'); clearInterval(S.demoTimer);
     });
   }
- 
+
   /* ---------------- init ---------------- */
   function init() {
     load();
@@ -589,7 +681,7 @@
       for (let i = 0; i < items.length; i++) if (items[i].kind === 'file' && /^image\//.test(items[i].type)) files.push(items[i].getAsFile());
       if (files.length) { e.preventDefault(); handleFiles(files); }
     });
- 
+
     $('#parlays').addEventListener('click', function (e) {
       const btn = e.target.closest('[data-act]');
       if (btn) { e.stopPropagation(); act(btn.dataset.act, btn.dataset.p, btn.dataset.l); return; }
@@ -615,16 +707,23 @@
       else { S.pending = S.pending.filter(function (x) { return x !== entry; }); renderPending(); }
     });
     $('#banner').addEventListener('click', function (e) { if (e.target.id === 'bannerKey') $('#btnSettings').click(); });
- 
+
     $('#btnRefresh').addEventListener('click', function () { refreshAll(); });
-    $('#btnSettings').addEventListener('click', function () { $('#setKey').value = lsGet(LS_KEY) || ''; $('#dlgSettings').returnValue = ''; $('#dlgSettings').showModal(); });
-    document.addEventListener('visibilitychange', function () { if (!document.hidden && S.parlays.length) refreshAll(); });
- 
+    $('#btnSettings').addEventListener('click', function () { $('#setKey').value = lsGet(LS_KEY) || ''; $('#dlgSettings').returnValue = ''; acctRender(); $('#dlgSettings').showModal(); });
+    $('#acctSignIn').addEventListener('click', function () { acctDo('in'); });
+    $('#acctSignUp').addEventListener('click', function () { acctDo('up'); });
+    $('#acctSignOut').addEventListener('click', async function () { await C.cloud.signOut(); C.state = 'off'; C.last = null; acctRender(); renderBanner(); toast('Signed out. Your data stays in the cloud.'); });
+    $('#acctSync').addEventListener('click', function () { syncAll(); });
+    $('#acctPass').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); acctDo('in'); } });
+    $('#acctEmail').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('#acctPass').focus(); } });
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) { if (S.parlays.length) refreshAll(); syncAll(); } });
+
     wireDialogs();
+    cloudInit();
     render(); renderPending();
     api('/api/config').then(function (c) { S.config = c; renderBanner(); }).catch(function () { S.serverDown = true; renderBanner(); });
     if (S.parlays.length) { refreshAll(); startDemoClock(); }
   }
- 
+
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();

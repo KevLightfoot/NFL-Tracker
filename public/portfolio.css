@@ -52,9 +52,12 @@ main[hidden] { display: none; }
 .pfe-btns .st-lost.on { background: rgba(239,68,68,.18); border-color: var(--red); color: #f87171; }
 .pfe-btns .st-placed.on { background: rgba(245,158,11,.16); border-color: var(--amber); color: #fbbf24; }
 
-.pf-choice { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.pf-choice { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
 .pf-choice .btn { padding: 12px 8px; font-weight: 800; }
 .pf-choice .btn.win { color: #4ade80; } .pf-choice .btn.lose { color: #f87171; }
-.pf-choice .btn.suggest { outline: 2px solid var(--blue); outline-offset: 1px; }
+.pf-choice .btn.win.on { background: rgba(34,197,94,.2); border-color: #22c55e; }
+.pf-choice .btn.lose.on { background: rgba(239,68,68,.18); border-color: #ef4444; }
+.pf-choice .btn.on { outline: 2px solid var(--blue); outline-offset: 1px; }
+#pfaSave:disabled { opacity: .4; cursor: not-allowed; }
 .pf-err { color: #fca5a5; font-size: 13px; margin: 0; }
 @media (max-width: 520px) { .pf-card b { font-size: 17px; } .pf-card .sub { font-size: 10.5px; } .pfe-money .res { margin-left: 0; width: 100%; } }
