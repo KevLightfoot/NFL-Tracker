@@ -13,3 +13,16 @@ services:
         value: gpt-4.1-mini
       - key: ALLOWED_ORIGIN
         value: https://kevlightfoot.github.io
+      # Push notifications (see README / setup steps). All optional: without them the site works, just no push.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY   # the SECRET key (sb_secret_...). Server only - never put it in the repo or config.js
+        sync: false
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_SUBJECT
+        sync: false
+      - key: CRON_SECRET
+        sync: false

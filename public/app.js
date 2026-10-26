@@ -95,6 +95,7 @@
 
   function acctRender() {
     const box = $('#acct'); if (!box) return;
+    notifRender();
     box.hidden = !C.cloud;
     $('#setTitle').textContent = !C.cloud ? 'Settings' : C.cloud.user ? 'Account' : 'Sign in or create account';
     if (!C.cloud) return;
@@ -110,6 +111,65 @@
     } else if (C.state === 'authError') { m.textContent = C.msg; m.className = 'hint err'; }
     else if (C.state === 'confirm') { m.textContent = C.msg; m.className = 'hint ok'; }
     else m.textContent = '';
+  }
+
+  /* ---------------- push notifications ---------------- */
+  // The service worker (sw.js) shows pushes; the server (notify.js) watches your slips and sends them. See supabase/push.sql.
+  const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const STANDALONE = navigator.standalone === true || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+  const PUSH_OK = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  function keyBytes(s) { const b = atob((s + '='.repeat((4 - s.length % 4) % 4)).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(b, function (c) { return c.charCodeAt(0); }); }
+  async function currentSub() { try { const reg = await navigator.serviceWorker.getRegistration(); return reg ? await reg.pushManager.getSubscription() : null; } catch (e) { return null; } }
+  function notifSay(text, cls) { const m = $('#notifMsg'); if (m) { m.textContent = text; m.className = 'hint' + (cls ? ' ' + cls : ''); } }
+
+  async function notifRender() {
+    const box = $('#notif'); if (!box) return;
+    const show = !!(C.cloud && C.cloud.user && S.config && S.config.vapidPublicKey);
+    box.hidden = !show; if (!show) return;
+    const on = $('#notifOn'), off = $('#notifOff'), test = $('#notifTest');
+    [on, off, test].forEach(function (b) { b.hidden = true; b.disabled = false; });
+    if (IS_IOS && !STANDALONE) return notifSay('On iPhone: tap the Share button in Safari, choose Add to Home Screen, then open Parlay Tracker from your Home Screen, sign in there, and turn notifications on.');
+    if (!PUSH_OK) return notifSay('This browser can’t receive push notifications.');
+    if (Notification.permission === 'denied') return notifSay('Notifications are blocked for this site. Allow them in your browser or phone settings, then come back here.', 'err');
+    if (await currentSub()) { notifSay('Notifications are on for this device: you’ll get a push when a leg hits or misses and when a slip cashes, even with the app closed.', 'ok'); off.hidden = false; test.hidden = false; }
+    else { notifSay('Get a push the moment a leg hits, even with the app closed.'); on.hidden = false; }
+  }
+
+  async function notifOn() {
+    const btn = $('#notifOn'); btn.disabled = true;
+    try {
+      const perm = await Notification.requestPermission();                          // must be the first await: it needs the tap
+      if (perm !== 'granted') throw new Error('Permission wasn’t granted. Allow notifications for this site and try again.');
+      const reg = await navigator.serviceWorker.register('sw.js');
+      await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(S.config.vapidPublicKey) });
+      const r = await C.cloud.client.from('push_subs').upsert({ user_id: C.cloud.user.id, endpoint: sub.endpoint, sub: sub.toJSON(), created_at: Date.now() }, { onConflict: 'user_id,endpoint' });
+      if (r.error) throw new Error(r.error.message);
+      toast('Notifications are on.');
+    } catch (e) { await notifRender(); notifSay('Couldn’t turn on notifications: ' + ((e && e.message) || e), 'err'); $('#notifOn').hidden = false; return; }
+    notifRender();
+  }
+
+  async function notifOff() {
+    try {
+      const sub = await currentSub();
+      if (sub) {
+        if (C.cloud && C.cloud.user) await C.cloud.client.from('push_subs').delete().eq('endpoint', sub.endpoint);
+        await sub.unsubscribe();
+      }
+    } catch (e) { /* best effort */ }
+    notifRender();
+  }
+
+  async function notifTest() {
+    const btn = $('#notifTest'); btn.disabled = true; notifSay('Sending a test…');
+    try {
+      const sub = await currentSub(); if (!sub) throw new Error('This device isn’t subscribed yet.');
+      await api('/api/push/test', { method: 'POST', body: JSON.stringify({ endpoint: sub.endpoint }) });
+      notifSay('Test sent: it should show up in a few seconds.', 'ok');
+    } catch (e) { notifSay('Test failed: ' + ((e && e.message) || e), 'err'); }
+    btn.disabled = false;
   }
 
   async function acctDo(kind) {
@@ -711,7 +771,10 @@
     $('#btnSettings').addEventListener('click', function () { $('#dlgSettings').returnValue = ''; acctRender(); $('#dlgSettings').showModal(); });
     $('#acctSignIn').addEventListener('click', function () { acctDo('in'); });
     $('#acctSignUp').addEventListener('click', function () { acctDo('up'); });
-    $('#acctSignOut').addEventListener('click', async function () { await C.cloud.signOut(); C.state = 'off'; C.last = null; acctRender(); renderBanner(); toast('Signed out. Your data stays in the cloud.'); });
+    $('#notifOn').addEventListener('click', notifOn);
+    $('#notifOff').addEventListener('click', notifOff);
+    $('#notifTest').addEventListener('click', notifTest);
+    $('#acctSignOut').addEventListener('click', async function () { await notifOff(); await C.cloud.signOut(); C.state = 'off'; C.last = null; acctRender(); renderBanner(); toast('Signed out. Your data stays in the cloud.'); });
     $('#acctPass').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); acctDo('in'); } });
     $('#acctEmail').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('#acctPass').focus(); } });
     document.addEventListener('visibilitychange', function () { if (!document.hidden) { if (S.parlays.length) refreshAll(); syncAll(); } });
@@ -719,7 +782,7 @@
     wireDialogs();
     cloudInit();
     render(); renderPending();
-    api('/api/config').then(function (c) { S.config = c; renderBanner(); }).catch(function () { S.serverDown = true; renderBanner(); });
+    api('/api/config').then(function (c) { S.config = c; renderBanner(); notifRender(); }).catch(function () { S.serverDown = true; renderBanner(); });
     if (S.parlays.length) { refreshAll(); startDemoClock(); }
   }
 

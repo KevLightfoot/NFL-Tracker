@@ -114,7 +114,7 @@
     }
 
     return {
-      ready: ready, collection: collection, signIn: signIn, signUp: signUp, signOut: signOut,
+      ready: ready, client: client, collection: collection, signIn: signIn, signUp: signUp, signOut: signOut,
       onAuth: function (f) { listeners.push(f); },
       get user() { return user; },
     };

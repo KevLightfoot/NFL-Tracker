@@ -22,7 +22,7 @@
         server.calls.push(q.op + ':' + table);
         if (q.op === 'select') return Promise.resolve({ data: rows.filter(function (r) { return r.user_id === uid; }).map(function (r) { return JSON.parse(JSON.stringify(r)); }), error: null });
         if (q.op === 'upsert') {
-          for (const row of q.payload) {
+          for (const row of (Array.isArray(q.payload) ? q.payload : [q.payload])) {
             if (row.user_id !== uid) return Promise.resolve({ error: { message: 'RLS violation' } });
             const i = rows.findIndex(function (r) { return r.user_id === uid && r.id === row.id; });
             const copy = JSON.parse(JSON.stringify(row)); if (i >= 0) rows[i] = copy; else rows.push(copy);

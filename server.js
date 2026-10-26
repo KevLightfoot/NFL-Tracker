@@ -7,12 +7,16 @@
  *   GET  /api/games    NFL + college football games (scoreboard, ~3 weeks window)
  *   GET  /api/game/:id live box score + scoring plays for one game
  *   POST /api/resolve  find the game (and team) for each leg
+ *   GET  /api/cron/check   run the push-notification checker now (CRON_SECRET)
+ *   POST /api/push/test    send a test notification to one registered device
  */
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const Teams = require('./public/lib/teams.js');
 const Stats = require('./public/lib/stats.js');
+const Evaluate = require('./public/lib/evaluate.js');
+const Notify = require('./notify.js');
 
 // minimal .env loader
 try {
@@ -373,11 +377,27 @@ function rateLimit(req, res, key, max, windowMs) {
   return true;
 }
 
+/* Push notifications (needs SUPABASE_URL, SUPABASE_SERVICE_KEY, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY on the server; otherwise inert). */
+const notifier = Notify.create({ env: process.env, getGames: getGames, getGame: getGame, E: Evaluate });
+
 async function handleApi(req, res, url) {
   const p = url.pathname;
   if (p === '/api/parse' && req.method === 'POST' && !rateLimit(req, res, 'parse', 12, 60 * 60 * 1000)) return;
   if (p === '/api/resolve' && req.method === 'POST' && !rateLimit(req, res, 'resolve', 120, 60 * 60 * 1000)) return;
-  if (p === '/api/config' && req.method === 'GET') return send(res, 200, { hasServerKey: !!process.env.OPENAI_API_KEY, model: MODEL });
+  if (p === '/api/config' && req.method === 'GET') return send(res, 200, { hasServerKey: !!process.env.OPENAI_API_KEY, model: MODEL, vapidPublicKey: notifier.publicKey });
+  if (p === '/api/cron/check' && req.method === 'GET') {
+    const secret = process.env.CRON_SECRET || '';
+    if (!secret) return send(res, 403, { error: 'Set CRON_SECRET on the server to use this endpoint.' });
+    if (url.searchParams.get('key') !== secret && req.headers['x-cron-key'] !== secret) return send(res, 403, { error: 'Wrong key.' });
+    return send(res, 200, await notifier.tick());
+  }
+  if (p === '/api/push/test' && req.method === 'POST') {
+    if (!rateLimit(req, res, 'pushtest', 10, 60 * 60 * 1000)) return;
+    const body = JSON.parse(await readBody(req, 20e3) || '{}');
+    if (!body.endpoint || typeof body.endpoint !== 'string') return send(res, 400, { error: 'Missing endpoint.' });
+    const r = await notifier.sendTest(body.endpoint);
+    return send(res, r.ok ? 200 : (r.status === 404 ? 404 : 502), r.ok ? { ok: true } : { error: r.text || 'Could not send.' });
+  }
   if (p === '/api/games' && req.method === 'GET') return send(res, 200, { games: await getGames() });
   if (p.startsWith('/api/game/') && req.method === 'GET') return send(res, 200, { game: await getGame(p.slice('/api/game/'.length), url.searchParams.get('league')) });
   if (p === '/api/resolve' && req.method === 'POST') {
@@ -435,8 +455,10 @@ if (require.main === module) {
   server.listen(PORT, HOST, function () {
     console.log('\n  Parlay Tracker running →  http://localhost:' + PORT);
     console.log('  Model: ' + MODEL + '   OpenAI API key: ' + (process.env.OPENAI_API_KEY ? 'found in environment/.env' : 'NOT SET (paste one in Settings or add it to .env)'));
-    console.log('  CORS origin: ' + ALLOWED_ORIGIN + '\n');
+    console.log('  CORS origin: ' + ALLOWED_ORIGIN);
+    console.log('  Push notifications: ' + (notifier.enabled ? 'ON (checking every minute)' : 'off (set SUPABASE_URL, SUPABASE_SERVICE_KEY, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY)') + '\n');
+    if (notifier.enabled) setInterval(function () { notifier.tick().then(function (r) { if (r && r.errors && r.errors.length) console.log('[push]', r.errors.join(' | ')); }); }, 60000).unref();
   });
 }
 
-module.exports = { server: server, resolveLeg: resolveLeg, pickGame: pickGame, parseSlip: parseSlip, TOOL: TOOL };
+module.exports = { notifier: notifier, server: server, resolveLeg: resolveLeg, pickGame: pickGame, parseSlip: parseSlip, TOOL: TOOL };
