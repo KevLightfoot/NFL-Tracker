@@ -72,9 +72,11 @@ async function getGames() {
     const jobs = [
       { league: 'nfl', week: true, url: leagueUrl(ESPN_BASE, 'nfl') + '/scoreboard?limit=100' },
       { league: 'nfl', week: false, url: leagueUrl(ESPN_BASE, 'nfl') + '/scoreboard?dates=' + range + '&limit=300' },
-      { league: 'nba', week: false, url: leagueUrl(ESPN_BASE, 'nba') + '/scoreboard?dates=' + day(-3) + '-' + day(5) + '&limit=200' },
-      { league: 'mlb', week: false, url: leagueUrl(ESPN_BASE, 'mlb') + '/scoreboard?dates=' + day(-3) + '-' + day(4) + '&limit=300' },
     ];
+    // NBA / MLB play daily and ESPN rejects date ranges on their scoreboards (HTTP 400), so ask for one day at a time
+    [['nba', -2, 3], ['mlb', -2, 3]].forEach(function (x) {
+      for (let off = x[1]; off <= x[2]; off++) jobs.push({ league: x[0], week: false, url: leagueUrl(ESPN_BASE, x[0]) + '/scoreboard?dates=' + day(off) });
+    });
     CFB_GROUPS.forEach(function (grp) {
       jobs.push({ league: 'cfb', week: true, url: leagueUrl(ESPN_BASE, 'cfb') + '/scoreboard?groups=' + grp + '&limit=400' });
       jobs.push({ league: 'cfb', week: false, url: leagueUrl(ESPN_BASE, 'cfb') + '/scoreboard?dates=' + range + '&groups=' + grp + '&limit=600' });

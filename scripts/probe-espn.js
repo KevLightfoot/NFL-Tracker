@@ -32,10 +32,15 @@ const trim = function (v, n) { const s = JSON.stringify(v); return s && s.length
 async function probe(league, eventId, f, out) {
   const log = function (s) { out.push(s || ''); };
   log('════════ ' + league.toUpperCase() + ' ════════');
-  const sb = await getJSON(BASE + PATHS[league] + '/scoreboard?dates=' + ymd(-3) + '-' + ymd(4) + '&limit=200', f);
-  const events = sb.events || [];
-  log('scoreboard: ' + events.length + ' games in the window (' + ymd(-3) + '–' + ymd(4) + ')');
-  if (!events.length) { log('  nothing on the schedule (off-season?): nothing more to check for ' + league); return; }
+  // ESPN rejects date ranges on these scoreboards (HTTP 400), so the site asks for one day at a time: same here
+  const seen = new Map(), failed = []; let okDays = 0;
+  for (let off = -2; off <= 3; off++) {
+    try { ((await getJSON(BASE + PATHS[league] + '/scoreboard?dates=' + ymd(off), f)).events || []).forEach(function (e) { seen.set(String(e.id), e); }); okDays++; }
+    catch (e) { failed.push(ymd(off) + ': ' + e.message.replace(/ for https?:.*/, '')); }
+  }
+  const events = Array.from(seen.values());
+  log('scoreboard: ' + events.length + ' games over ' + okDays + ' of 6 days asked (' + ymd(-2) + '–' + ymd(3) + ')' + (failed.length ? '\n  ⚠ failed: ' + failed.join('; ') : ''));
+  if (!okDays) throw new Error('every scoreboard request failed (' + failed[0] + ')');
   const games = events.map(function (e) { return Stats.normalizeEvent(e, league); });
   log('  e.g. ' + games.slice(0, 3).map(function (g) { return g.away.abbr + ' @ ' + g.home.abbr + ' [' + g.state + (g.detail ? ': ' + g.detail : '') + ']'; }).join('   '));
   const unknown = []; games.forEach(function (g) { [g.away, g.home].forEach(function (t) { if (!Teams[league === 'nba' ? 'NBA_INFO' : 'MLB_INFO'][t.abbr]) unknown.push(t.abbr); }); });

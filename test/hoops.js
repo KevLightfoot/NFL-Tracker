@@ -329,8 +329,10 @@ test('server: NBA + MLB scoreboards, league-aware game and roster lookups, resol
     const byId = {}; r.json.games.forEach(function (g) { byId[g.id] = g; });
     assert.strictEqual(byId['5001'].league, 'nba'); assert.strictEqual(byId['6001'].league, 'mlb'); assert.strictEqual(byId['6002'].league, 'mlb');
     assert.strictEqual(byId['5001'].away.abbr, 'LAL'); assert.strictEqual(byId['6001'].thisWeek, true, 'daily leagues: games around now count as "this week"');
-    assert.ok(calls.some(function (u) { return /basketball\/nba\/scoreboard\?dates=\d{8}-\d{8}/.test(u); }), 'NBA scoreboard asked for a date range');
-    assert.ok(calls.some(function (u) { return /baseball\/mlb\/scoreboard\?dates=\d{8}-\d{8}/.test(u); }), 'MLB scoreboard asked for a date range');
+    ['basketball/nba', 'baseball/mlb'].forEach(function (lg) {
+      const mine = calls.filter(function (u) { return u.indexOf(lg + '/scoreboard') >= 0; });
+      assert.ok(mine.length >= 5 && mine.every(function (u) { return /scoreboard\?dates=\d{8}$/.test(u); }), lg + ' scoreboards are asked one day at a time (ESPN rejects ranges): ' + mine.join(' '));
+    });
 
     r = await req('GET', '/api/game/6001?league=mlb'); assert.strictEqual(r.json.game.league, 'mlb'); assert.strictEqual(r.json.game.hasPlays, true);
     assert.ok(calls.some(function (u) { return /baseball\/mlb\/summary\?event=6001/.test(u); }));
@@ -430,7 +432,7 @@ test('probe script: reports what it understood from a real-shaped payload', asyn
   assert.ok(/MIN \| PTS \| FG \| 3PT/.test(out), 'prints the real labels'); assert.ok(/play-by-play available.*yes/.test(out));
   assert.ok(/pts_reb_ast\s+\d+/.test(out) && /total_bases\s+\d+/.test(out), out);
   const bad = (await main(['nba'], async function () { return { ok: false, status: 500, json: async function () { return {}; } }; }, [])).join('\n');
-  assert.ok(/✗ nba: HTTP 500/.test(bad), bad);
+  assert.ok(/✗ nba: every scoreboard request failed \(.*HTTP 500/.test(bad), bad);
 });
 
 /* ---------------- run ---------------- */
