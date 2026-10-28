@@ -1,11 +1,11 @@
 {
   "name": "nfl-parlay-tracker",
   "version": "1.0.0",
-  "description": "Upload a sportsbook screenshot, track every leg of the parlay live.",
+  "description": "Upload a sportsbook screenshot, track every leg of the parlay live (NFL, college football, NBA, MLB).",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/run.js && node test/extra.js && node test/openai.js && node test/portfolio.js && node test/cfb.js && node test/cloud.js && node test/notify.js"
+    "test": "node test/run.js && node test/extra.js && node test/openai.js && node test/portfolio.js && node test/cfb.js && node test/cloud.js && node test/notify.js && node test/hoops.js"
   },
   "engines": {
     "node": ">=18"

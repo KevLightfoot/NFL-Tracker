@@ -12,6 +12,30 @@
     total_tds: 'Touchdowns', fantasy_points: 'Fantasy Points', fg_made: 'FGs Made', fg_attempted: 'FG Attempts', longest_fg: 'Longest FG',
     xp_made: 'XPs Made', kicking_points: 'Kicking Points', tackles_assists: 'Tackles + Assists', solo_tackles: 'Solo Tackles',
     sacks: 'Sacks', def_interceptions: 'Interceptions', other: 'Prop',
+    // basketball
+    points: 'Points', rebounds: 'Rebounds', assists: 'Assists', three_pointers_made: '3-Pointers Made', three_pointers_attempted: '3-Pointers Attempted',
+    field_goals_made: 'FGs Made', field_goals_attempted: 'FG Attempts', free_throws_made: 'Free Throws Made', free_throws_attempted: 'Free Throw Attempts',
+    steals: 'Steals', blocks: 'Blocks', turnovers: 'Turnovers', steals_blocks: 'Steals + Blocks', pts_reb: 'Pts + Reb', pts_ast: 'Pts + Ast',
+    reb_ast: 'Reb + Ast', pts_reb_ast: 'Pts + Reb + Ast', offensive_rebounds: 'Offensive Rebounds', defensive_rebounds: 'Defensive Rebounds',
+    personal_fouls: 'Fouls', minutes: 'Minutes', double_double: 'Double-Double', triple_double: 'Triple-Double',
+    // baseball
+    hits: 'Hits', runs: 'Runs', rbis: 'RBIs', home_runs: 'Home Runs', walks: 'Walks', batter_strikeouts: 'Strikeouts (batter)', at_bats: 'At Bats',
+    hits_runs_rbis: 'Hits + Runs + RBIs', singles: 'Singles', doubles: 'Doubles', triples: 'Triples', total_bases: 'Total Bases', stolen_bases: 'Stolen Bases',
+    pitcher_strikeouts: 'Strikeouts (pitcher)', pitching_outs: 'Pitching Outs', earned_runs: 'Earned Runs Allowed', hits_allowed: 'Hits Allowed',
+    walks_allowed: 'Walks Allowed', runs_allowed: 'Runs Allowed', pitches_thrown: 'Pitches Thrown',
+  };
+  /* stat dropdown in the edit-leg dialog, grouped by sport */
+  const STAT_GROUPS = {
+    Football: ['passing_yards', 'passing_tds', 'passing_attempts', 'passing_completions', 'interceptions_thrown', 'longest_completion', 'rushing_yards',
+      'rushing_attempts', 'rushing_tds', 'longest_rush', 'receiving_yards', 'receptions', 'receiving_tds', 'longest_reception', 'receiving_targets',
+      'rush_rec_yards', 'pass_rush_yards', 'rush_rec_tds', 'total_tds', 'fg_made', 'fg_attempted', 'longest_fg', 'xp_made', 'kicking_points',
+      'tackles_assists', 'solo_tackles', 'sacks', 'def_interceptions'],
+    Basketball: ['points', 'rebounds', 'assists', 'three_pointers_made', 'three_pointers_attempted', 'field_goals_made', 'field_goals_attempted',
+      'free_throws_made', 'free_throws_attempted', 'steals', 'blocks', 'turnovers', 'steals_blocks', 'pts_reb', 'pts_ast', 'reb_ast', 'pts_reb_ast',
+      'offensive_rebounds', 'defensive_rebounds', 'personal_fouls', 'minutes', 'double_double', 'triple_double'],
+    Baseball: ['hits', 'runs', 'rbis', 'home_runs', 'walks', 'batter_strikeouts', 'at_bats', 'hits_runs_rbis', 'singles', 'doubles', 'triples', 'total_bases',
+      'stolen_bases', 'pitcher_strikeouts', 'pitching_outs', 'earned_runs', 'hits_allowed', 'walks_allowed', 'runs_allowed', 'pitches_thrown'],
+    Any: ['fantasy_points', 'other'],
   };
   const STAT_UNIT = {
     passing_yards: 'pass yds', passing_tds: 'pass TD', passing_attempts: 'att', passing_completions: 'cmp', interceptions_thrown: 'INT',
@@ -20,8 +44,17 @@
     rush_rec_yards: 'rush+rec yds', pass_rush_yards: 'pass+rush yds', rush_rec_tds: 'TD', total_tds: 'TD', fantasy_points: 'fpts',
     fg_made: 'FG', fg_attempted: 'FGA', longest_fg: 'yds', xp_made: 'XP', kicking_points: 'pts', tackles_assists: 'tkl', solo_tackles: 'solo',
     sacks: 'sacks', def_interceptions: 'INT', other: '',
+    points: 'pts', rebounds: 'reb', assists: 'ast', three_pointers_made: '3PM', three_pointers_attempted: '3PA', field_goals_made: 'FGM', field_goals_attempted: 'FGA',
+    free_throws_made: 'FTM', free_throws_attempted: 'FTA', steals: 'stl', blocks: 'blk', turnovers: 'TO', steals_blocks: 'stl+blk', pts_reb: 'pts+reb',
+    pts_ast: 'pts+ast', reb_ast: 'reb+ast', pts_reb_ast: 'PRA', offensive_rebounds: 'oreb', defensive_rebounds: 'dreb', personal_fouls: 'PF', minutes: 'min',
+    double_double: '', triple_double: '',
+    hits: 'H', runs: 'R', rbis: 'RBI', home_runs: 'HR', walks: 'BB', batter_strikeouts: 'K', at_bats: 'AB', hits_runs_rbis: 'H+R+RBI', singles: '1B', doubles: '2B',
+    triples: '3B', total_bases: 'TB', stolen_bases: 'SB', pitcher_strikeouts: 'K', pitching_outs: 'outs', earned_runs: 'ER', hits_allowed: 'H', walks_allowed: 'BB',
+    runs_allowed: 'R', pitches_thrown: 'pitches',
   };
-  const PERIOD_LABEL = { full: '', '1h': '1H ', '2h': '2H ', q1: '1Q ', q2: '2Q ', q3: '3Q ', q4: '4Q ' };
+  const PERIOD_LABEL = { full: '', '1h': '1H ', '2h': '2H ', q1: '1Q ', q2: '2Q ', q3: '3Q ', q4: '4Q ', f3: 'F3 ', f5: 'F5 ', f7: 'F7 ', i1: '1st Inning ' };
+  const SPORT = { nfl: 'football', cfb: 'football', nba: 'basketball', mlb: 'baseball' };
+  const sportOf = function (g) { return (g && SPORT[g.league]) || 'football'; };
 
   function fmt(x) {
     if (x == null || !isFinite(x)) return '–';
@@ -51,6 +84,7 @@
       case 'anytime_td': return leg.player + ' Anytime TD';
       case 'first_td': return leg.player + ' First TD';
       case 'last_td': return leg.player + ' Last TD';
+      case 'first_basket': return leg.player + ' First Basket';
       case 'player_prop': {
         const lbl = STAT_LABEL[leg.stat] || 'Prop';
         if (leg.side === 'yes') return leg.player + ' ' + lbl;
@@ -70,32 +104,53 @@
     return g ? g.away.abbr + ' ' + fmt(g.away.score) + ' – ' + g.home.abbr + ' ' + fmt(g.home.score) : '';
   }
 
+  /* baseball: innings completely finished ("Top 5th" / "Mid 5th" / "Bot 5th" -> 4, "End 5th" -> 5) */
+  function inningsDone(g) {
+    if (g.state === 'post') return 99;
+    if (g.state !== 'in') return 0;
+    const p = g.period || 0, d = String(g.detail || '');
+    return /^end/i.test(d) ? p : Math.max(0, p - 1);
+  }
+
   /* how many whole periods are in the books (handles halftime and "End of 1st") */
   function completedPeriods(g) {
     if (g.state === 'post') return 99;
     if (g.state !== 'in') return 0;
+    if (sportOf(g) === 'baseball') return inningsDone(g);
     const detail = String(g.detail || ''), period = g.period || 0;
     if (/half/i.test(detail)) return Math.max(2, period);
     const zero = /^0?:00(\.\d+)?$/.test(String(g.clock || '').trim()) || /end of/i.test(detail);
     return zero ? period : Math.max(0, period - 1);
   }
 
-  /* fraction of regulation played, 0..1 (OT counts as 1) */
+  /* fraction of regulation played, 0..1 (OT / extra innings count as 1) */
   function elapsedFrac(g) {
     if (!g || g.state === 'pre') return 0;
     if (g.state === 'post') return 1;
+    const sp = sportOf(g), p = g.period || 0;
+    if (sp === 'baseball') {
+      if (p > 9) return 1;
+      const d = String(g.detail || '');
+      const inn = /^end/i.test(d) ? p : /^mid/i.test(d) ? p - 0.5 : /^bot/i.test(d) ? p - 0.25 : p - 0.75;
+      return Math.min(1, Math.max(0, inn / 9));
+    }
     if (/half/i.test(String(g.detail || ''))) return 0.5;
-    const p = g.period || 0;
     if (p > 4) return 1;
+    const secs = sp === 'basketball' ? 720 : 900;
     const m = String(g.clock || '').match(/^(\d+):(\d{2})/);
-    const left = m ? (+m[1]) * 60 + (+m[2]) : 900;
-    return Math.min(1, Math.max(0, ((p - 1) * 900 + (900 - left)) / 3600));
+    const left = m ? (+m[1]) * 60 + (+m[2]) : secs;
+    return Math.min(1, Math.max(0, ((p - 1) * secs + (secs - left)) / (secs * 4)));
   }
 
   function scopedScore(g, scope) {
     scope = scope || 'full';
     const a = g.away, h = g.home, post = g.state === 'post', period = g.period || 0, done = completedPeriods(g);
     const ls = function (t, i) { return t.linescores[i] == null ? 0 : t.linescores[i]; };
+    if (sportOf(g) === 'baseball' && scope !== 'full') {
+      const N = scope === 'i1' ? 1 : scope === '1h' ? 5 : parseInt(String(scope).replace(/\D/g, ''), 10) || 9;   // "1st half" of a baseball slip means the first five innings
+      const sum = function (t) { let x = 0; for (let i = 0; i < N; i++) x += ls(t, i); return x; };
+      return { away: sum(a), home: sum(h), final: done >= N, started: g.state !== 'pre' };
+    }
     if (scope === 'full') return { away: a.score, home: h.score, final: post, started: g.state !== 'pre' };
     if (scope === '1h') return { away: ls(a, 0) + ls(a, 1), home: ls(h, 0) + ls(h, 1), final: done >= 2, started: g.state !== 'pre' };
     if (scope === '2h') {
@@ -158,6 +213,12 @@
       r.state = 'unresolved';
       r.detail = leg.gameId ? 'Loading game…' : 'Finding this game…';
       if (market === 'other') r.detail = 'Not auto-trackable — mark it yourself';
+      return;
+    }
+
+    // a postponed / cancelled game is voided by the book
+    if (g && g.state !== 'in' && /postponed|cancell?ed/i.test(String(g.detail || '')) && manualVal == null) {
+      r.state = 'void'; r.kind = 'none'; r.detail = 'Game ' + (/postponed/i.test(g.detail) ? 'postponed' : 'cancelled') + ' — the book will void this leg';
       return;
     }
 
@@ -234,6 +295,17 @@
       return;
     }
 
+    if (market === 'first_basket') {
+      r.kind = 'check';
+      if (!g) return;
+      const res = Stats.firstBasket(g, leg.player);
+      if (res.decided) {
+        r.state = res.match ? 'hit' : 'miss'; r.onTrack = res.match;
+        r.detail = 'First basket: ' + res.play.text.replace(/\s*\([^)]*\)\s*$/, '');
+      } else { r.state = g.state === 'in' ? 'live' : g.state === 'post' ? 'miss' : 'pending'; r.detail = g.state === 'in' ? 'No basket yet' : ''; }
+      return;
+    }
+
     if (market === 'anytime_td' || market === 'player_prop') {
       const stat = market === 'anytime_td' ? 'total_tds' : leg.stat;
       const side = market === 'anytime_td' ? 'yes' : leg.side;
@@ -268,7 +340,7 @@
       if (r.state === 'live' || r.state === 'pending') {
         if (side === 'under') r.detail = r.detail || 'Room for ' + fmt(Math.max(0, line - value)) + ' more';
         else if (!r.detail) r.detail = fmt(Math.max(0, Math.floor(line) + 1 - value)) + ' to go';
-        if (r.state === 'live' && g && !/^longest_/.test(stat || '') && side !== 'yes' && manualVal == null) r.detail += paceText(g, value, line, side);
+        if (r.state === 'live' && g && sportOf(g) !== 'baseball' && !/^longest_|^double_|^triple_/.test(stat || '') && side !== 'yes' && manualVal == null) r.detail += paceText(g, value, line, side);
       } else if (r.state === 'hit' && !r.detail) r.detail = side === 'under' ? 'Stayed under' : 'Cleared the line';
       else if (r.state === 'miss' && !r.detail) r.detail = side === 'under' ? 'Went over' : 'Finished short';
       return;
@@ -292,5 +364,5 @@
     return { counts: c, total: total, hits: c.hit, status: status, alive: c.miss === 0 };
   }
 
-  return { evaluateLeg: evaluateLeg, describeLeg: describeLeg, summarize: summarize, scopedScore: scopedScore, STAT_LABEL: STAT_LABEL, fmt: fmt, gameStatusText: gameStatusText };
+  return { evaluateLeg: evaluateLeg, describeLeg: describeLeg, summarize: summarize, scopedScore: scopedScore, STAT_LABEL: STAT_LABEL, STAT_GROUPS: STAT_GROUPS, fmt: fmt, gameStatusText: gameStatusText };
 });

@@ -1,9 +1,10 @@
 # Parlay Tracker
 
-Upload sportsbook screenshots and track individual NFL bet legs against ESPN scoreboard and box-score data.
+Upload sportsbook screenshots and track individual bet legs (NFL, college football, NBA, MLB) against ESPN scoreboard and box-score data.
 
 - Reads screenshots with OpenAI vision and returns structured bet data.
-- Supports moneylines, spreads, totals, player props, TD markets, and more.
+- Supports moneylines, spreads / run lines, totals, team totals, half / quarter / first-5-inning / first-inning markets, player props, TD scorers (football) and first basket (NBA).
+- NBA props: points, rebounds, assists, threes, PRA combos, steals / blocks, double-doubles, fantasy. MLB props: hits, total bases, home runs, RBIs, runs, strikeouts, pitcher outs / earned runs and more.
 - Tracks multiple bets, with editable legs and manual corrections.
 - ESPN scoreboard and box scores refresh during games.
 
@@ -22,6 +23,10 @@ Set `OPENAI_API_KEY` and optionally `OPENAI_MODEL` in Render environment setting
 Render can host this as a Node web service with build command `npm test` and start command `npm start`. Set the host to use its provided `PORT`; the server binds to `0.0.0.0` automatically on Render. Free services can sleep when idle, and local files are ephemeral, so use this as a personal test deployment rather than a production service.
 
 ## Notes / limitations
+
+- NBA / MLB box-score parsing was written from ESPN's documented payload shape. Run `node scripts/probe-espn.js` once (needs internet) to check it against the live feed; it prints what it understood and which stats would fall back to manual entry.
+- MLB singles / doubles / triples / total bases / stolen bases are counted from the play-by-play (ESPN's box score has no such columns); if the feed's plays don't add up to a player's hits, that stat asks for a manual value instead of guessing.
+- NBA "first basket" ignores free throws; postponed or cancelled games void their legs.
 
 - ESPN endpoints are unofficial and may change; real live feed compatibility must be tested after deployment.
 - Verify extracted bet legs and scores against your sportsbook and ESPN.

@@ -1,4 +1,4 @@
-/* ESPN payload normalisation, player-name matching and stat extraction. */
+/* ESPN payload normalisation, player-name matching and stat extraction (NFL, college football, NBA, MLB). */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory(require('./teams.js'));
   else root.NFLStats = factory(root.NFLTeams);
@@ -82,8 +82,56 @@
   }
 
   /* ---------- ESPN parsing ---------- */
-  // NFL abbreviations are normalised (WAS->WSH); college abbreviations are used exactly as ESPN sends them.
-  function canonAbbr(a, league) { return league === 'cfb' ? (a || '') : (Teams.matchTeam(a, 'nfl') || a || ''); }
+  const LEAGUES = ['nfl', 'cfb', 'nba', 'mlb'];
+  const SPORT = { nfl: 'football', cfb: 'football', nba: 'basketball', mlb: 'baseball' };
+  function cleanLeague(l) { return LEAGUES.indexOf(l) >= 0 ? l : 'nfl'; }
+  // Pro abbreviations are normalised to our tables (WAS->WSH, GSW->GS); college abbreviations are used exactly as ESPN sends them.
+  function canonAbbr(a, league) {
+    if (league === 'cfb') return a || '';
+    if (league === 'nba' || league === 'mlb') return Teams.matchTeam(a, league, true) || a || '';
+    return Teams.matchTeam(a, 'nfl') || a || '';
+  }
+
+  /* ---- basketball / baseball box-score lines (labels differ from football; "10-20" means made-attempted) ---- */
+  const HOOPS_KEY = {
+    min: 'min', minutes: 'min', pts: 'pts', points: 'pts', fg: 'fg', fieldgoals: 'fg', fieldgoalsmadefieldgoalsattempted: 'fg',
+    '3pt': 'tp', threepointfieldgoalsmadethreepointfieldgoalsattempted: 'tp', threepointers: 'tp', ft: 'ft', freethrows: 'ft', freethrowsmadefreethrowsattempted: 'ft',
+    reb: 'reb', rebounds: 'reb', ast: 'ast', assists: 'ast', to: 'to', tov: 'to', turnovers: 'to', stl: 'stl', steals: 'stl', blk: 'blk', blocks: 'blk',
+    oreb: 'oreb', offensiverebounds: 'oreb', dreb: 'dreb', defensiverebounds: 'dreb', pf: 'pf', fouls: 'pf', personalfouls: 'pf', '+/-': 'pm', plusminus: 'pm',
+  };
+  function num0(s) { const v = parseFloat(String(s == null ? '' : s).replace(/[^0-9.\-]/g, '')); return isFinite(v) ? v : 0; }
+  function parseHoops(labels, stats) {
+    const o = {};
+    (labels || []).forEach(function (label, i) {
+      const raw = stats ? stats[i] : null; if (raw == null) return;
+      const key = HOOPS_KEY[String(label).toLowerCase().replace(/\s+/g, '')] || HOOPS_KEY[String(label).toLowerCase().replace(/[^a-z0-9+\/-]/g, '')];
+      if (!key) return;
+      const s = String(raw).trim(); let m;
+      if ((m = s.match(/^(\d+)\s*[-\/]\s*(\d+)$/))) { o[key + '_m'] = +m[1]; o[key + '_a'] = +m[2]; }
+      else o[key] = num0(s);
+    });
+    return o;
+  }
+  function parseBase(labels, stats) {
+    const o = {};
+    (labels || []).forEach(function (label, i) {
+      const raw = stats ? stats[i] : null; if (raw == null) return;
+      const lab = String(label).toLowerCase().replace(/[^a-z0-9#-]+/g, ''), s = String(raw).trim(); let m;
+      if (lab === 'h-ab') { if ((m = s.match(/^(\d+)\s*-\s*(\d+)$/))) { if (o.h == null) o.h = +m[1]; if (o.ab == null) o.ab = +m[2]; } return; }
+      if (lab === 'pc-st') { if ((m = s.match(/^(\d+)\s*-\s*(\d+)$/))) { if (o.pc == null) o.pc = +m[1]; o.st = +m[2]; } return; }
+      const key = lab === 'so' ? 'k' : lab === '#p' ? 'p' : lab.replace(/[^a-z0-9]/g, '');
+      if (!key) return;
+      if (key === 'ip') { const parts = s.split('.'); o.ip = num0(s); o.outs = (parseInt(parts[0], 10) || 0) * 3 + (parseInt(parts[1], 10) || 0); }
+      else o[key] = num0(s);
+    });
+    return o;
+  }
+  function baseCat(cat, labels) {
+    const nm = String(cat.type || cat.name || '').toLowerCase();
+    if (/pitch/.test(nm)) return 'pitching';
+    if (/bat/.test(nm)) return 'batting';
+    return (labels || []).some(function (l) { return String(l).toUpperCase() === 'IP'; }) ? 'pitching' : 'batting';
+  }
 
   function parseStatLine(labels, stats) {
     const o = {};
@@ -128,7 +176,7 @@
 
   /* scoreboard event -> game (no players) */
   function normalizeEvent(ev, league) {
-    league = league === 'cfb' ? 'cfb' : 'nfl';
+    league = cleanLeague(league);
     const comp = (ev.competitions || [])[0] || {};
     const st = statusBlock(ev.status || comp.status);
     const g = { id: String(ev.id), league: league, date: ev.date || comp.date || null, name: ev.shortName || ev.name || '', players: [], scoringPlays: [] };
@@ -138,9 +186,45 @@
     return g;
   }
 
+  /* Singles / doubles / triples / steals aren't columns in ESPN's MLB box score, so they're counted from the play-by-play.
+     g.hasPlays stays false when the feed has none, and those stats then fall back to manual entry. */
+  function attachBaseEvents(g, j) {
+    const plays = Array.isArray(j.plays) ? j.plays : [];
+    g.hasPlays = plays.length > 0;
+    if (!g.hasPlays) return;
+    const byId = {};
+    g.players.forEach(function (p) { if (p.id) byId[p.id] = p; p.ev = { s: 0, d: 0, t: 0, sb: 0 }; });
+    const seen = {};
+    plays.forEach(function (pl) {
+      if (!pl) return;
+      if (pl.id != null) { if (seen[pl.id]) return; seen[pl.id] = true; }
+      const text = String(pl.text || pl.shortText || ''), type = String((pl.type && (pl.type.text || pl.type.type)) || '').toLowerCase();
+      let kind = null;
+      if (type === 'single' || (!type && /\bsingled\b/i.test(text))) kind = 's';
+      else if (type === 'double' || (!type && /\bdoubled\b/i.test(text) && !/doubled off/i.test(text))) kind = 'd';
+      else if (type === 'triple' || (!type && /\btripled\b/i.test(text))) kind = 't';
+      else if (!type || type === 'play result' || type === 'play') {
+        if (/\bsingled\b/i.test(text)) kind = 's'; else if (/\bdoubled\b/i.test(text) && !/doubled off/i.test(text)) kind = 'd'; else if (/\btripled\b/i.test(text)) kind = 't';
+      }
+      if (!kind && /\bstole\b/i.test(text) && !/caught stealing/i.test(text)) kind = 'sb';
+      if (!kind) return;
+      let p = null;
+      const want = kind === 'sb' ? /run/i : /bat/i;
+      const part = (pl.participants || []).find(function (x) { return x && want.test(String(x.type || x.role || '')); });
+      const pid = part && ((part.athlete && part.athlete.id) || part.id);
+      if (pid != null && byId[String(pid)]) p = byId[String(pid)];
+      if (!p) {
+        const m = text.match(/^(.+?)\s+(?:singled|doubled|tripled|stole|hit\b|ground)/i);
+        if (m) p = findPlayer(g.players, m[1].trim());
+      }
+      if (p && p.ev) p.ev[kind]++;
+    });
+  }
+
   /* summary payload -> game with players + scoring plays */
   function normalizeSummary(j, idHint, league) {
-    league = league === 'cfb' ? 'cfb' : 'nfl';
+    league = cleanLeague(league);
+    const sport = SPORT[league];
     const hdr = j.header || {};
     const comp = (hdr.competitions || [])[0] || {};
     const st = statusBlock(comp.status);
@@ -162,17 +246,33 @@
       const t = tb.team || {};
       const abbr = canonAbbr(t.abbreviation, league) || byTeamId[String(t.id)] || '';
       (tb.statistics || []).forEach(function (cat) {
+        const labels = cat.labels && cat.labels.length ? cat.labels : (cat.names || cat.keys);
+        const catName = sport === 'football' ? cat.name : sport === 'basketball' ? 'box' : baseCat(cat, labels);
+        const parse = sport === 'football' ? parseStatLine : sport === 'basketball' ? parseHoops : parseBase;
         (cat.athletes || []).forEach(function (a) {
           const ath = a.athlete || {};
           const nm = ath.displayName || ath.fullName || ath.shortName;
           if (!nm) return;
+          if (sport !== 'football' && (a.didNotPlay || !a.stats || !a.stats.length)) return;   // bench players who haven't played
           const key = abbr + '|' + (ath.id || normName(nm));
           if (!idx[key]) { idx[key] = { id: String(ath.id || ''), name: nm, team: abbr, stats: {} }; g.players.push(idx[key]); }
-          idx[key].stats[cat.name] = parseStatLine(cat.labels || cat.names, a.stats);
+          idx[key].stats[catName] = parse(labels, a.stats);
         });
       });
     });
+    if (sport === 'baseball') attachBaseEvents(g, j);
 
+    if (sport === 'basketball') {
+      // only the first few baskets matter ("first basket" markets); keep the payload small
+      (j.plays || []).filter(function (pl) { return pl && pl.scoringPlay; }).slice(0, 4).forEach(function (pl) {
+        const tid = pl.team && pl.team.id != null ? String(pl.team.id) : '';
+        g.scoringPlays.push({
+          text: pl.text || '', type: (pl.type && (pl.type.text || pl.type.abbreviation)) || '', team: byTeamId[tid] || '',
+          period: pl.period && pl.period.number != null ? pl.period.number : n(pl.period),
+          clock: pl.clock && pl.clock.displayValue ? pl.clock.displayValue : '', awayScore: n(pl.awayScore), homeScore: n(pl.homeScore),
+        });
+      });
+    }
     (j.scoringPlays || []).forEach(function (sp) {
       const tid = sp.team && sp.team.id != null ? String(sp.team.id) : '';
       g.scoringPlays.push({
@@ -244,15 +344,71 @@
     def_interceptions: function (p) { return n(cat(p, 'interceptions').int); },
   };
 
-  function supportedStat(stat) { return stat === 'fantasy_points' || !!STAT_FN[stat]; }
+  /* ---- basketball ---- */
+  function bx(p) { return (p && p.stats && p.stats.box) || {}; }
+  function ddCount(p) { const b = bx(p); return [b.pts, b.reb, b.ast, b.stl, b.blk].filter(function (v) { return n(v) >= 10; }).length; }
+  function nbaFantasy(p, sys) {
+    const b = bx(p), dd = ddCount(p);
+    if (sys === 'dk') return n(b.pts) + n(b.tp_m) * 0.5 + n(b.reb) * 1.25 + n(b.ast) * 1.5 + n(b.stl) * 2 + n(b.blk) * 2 - n(b.to) * 0.5 + (dd >= 2 ? 1.5 : 0) + (dd >= 3 ? 3 : 0);
+    return n(b.pts) + n(b.reb) * 1.2 + n(b.ast) * 1.5 + n(b.stl) * 3 + n(b.blk) * 3 - n(b.to);      // FanDuel / PrizePicks / Underdog
+  }
+  const NBA_FN = {
+    points: function (p) { return n(bx(p).pts); }, rebounds: function (p) { return n(bx(p).reb); }, assists: function (p) { return n(bx(p).ast); },
+    three_pointers_made: function (p) { return n(bx(p).tp_m); }, three_pointers_attempted: function (p) { return n(bx(p).tp_a); },
+    field_goals_made: function (p) { return n(bx(p).fg_m); }, field_goals_attempted: function (p) { return n(bx(p).fg_a); },
+    free_throws_made: function (p) { return n(bx(p).ft_m); }, free_throws_attempted: function (p) { return n(bx(p).ft_a); },
+    steals: function (p) { return n(bx(p).stl); }, blocks: function (p) { return n(bx(p).blk); }, turnovers: function (p) { return n(bx(p).to); },
+    steals_blocks: function (p) { return n(bx(p).stl) + n(bx(p).blk); },
+    pts_reb: function (p) { return n(bx(p).pts) + n(bx(p).reb); }, pts_ast: function (p) { return n(bx(p).pts) + n(bx(p).ast); },
+    reb_ast: function (p) { return n(bx(p).reb) + n(bx(p).ast); }, pts_reb_ast: function (p) { return n(bx(p).pts) + n(bx(p).reb) + n(bx(p).ast); },
+    offensive_rebounds: function (p) { return n(bx(p).oreb); }, defensive_rebounds: function (p) { return n(bx(p).dreb); },
+    personal_fouls: function (p) { return n(bx(p).pf); }, minutes: function (p) { return n(bx(p).min); },
+    double_double: function (p) { return ddCount(p) >= 2 ? 1 : 0; }, triple_double: function (p) { return ddCount(p) >= 3 ? 1 : 0; },
+  };
+
+  /* ---- baseball ---- */
+  function bt(p) { return (p && p.stats && p.stats.batting) || {}; }
+  function pt(p) { return (p && p.stats && p.stats.pitching) || {}; }
+  // singles/doubles/triples come from the play-by-play; null (-> enter it yourself) when that isn't there or doesn't add up to the hit count
+  function hitTypes(p, g) {
+    const b = bt(p);
+    if (n(b.h) === 0 && !(p.ev && (p.ev.s || p.ev.d || p.ev.t))) return { s: 0, d: 0, t: 0 };
+    if (!g || !g.hasPlays || !p.ev) return null;
+    if (p.ev.s + p.ev.d + p.ev.t !== n(b.h) - n(b.hr)) return null;
+    return p.ev;
+  }
+  const MLB_FN = {
+    hits: function (p) { return n(bt(p).h); }, runs: function (p) { return n(bt(p).r); }, rbis: function (p) { return n(bt(p).rbi); },
+    home_runs: function (p) { return n(bt(p).hr); }, walks: function (p) { return n(bt(p).bb); }, batter_strikeouts: function (p) { return n(bt(p).k); },
+    at_bats: function (p) { return n(bt(p).ab); },
+    hits_runs_rbis: function (p) { return n(bt(p).h) + n(bt(p).r) + n(bt(p).rbi); },
+    singles: function (p, g) { const e = hitTypes(p, g); return e ? e.s : null; },
+    doubles: function (p, g) { const e = hitTypes(p, g); return e ? e.d : null; },
+    triples: function (p, g) { const e = hitTypes(p, g); return e ? e.t : null; },
+    total_bases: function (p, g) { if (bt(p).tb != null) return n(bt(p).tb); const e = hitTypes(p, g); return e ? e.s + e.d * 2 + e.t * 3 + n(bt(p).hr) * 4 : null; },
+    stolen_bases: function (p, g) { if (bt(p).sb != null) return n(bt(p).sb); return g && g.hasPlays && p.ev ? p.ev.sb : null; },
+    pitcher_strikeouts: function (p) { return n(pt(p).k); }, pitching_outs: function (p) { return n(pt(p).outs); },
+    earned_runs: function (p) { return n(pt(p).er); }, hits_allowed: function (p) { return n(pt(p).h); }, walks_allowed: function (p) { return n(pt(p).bb); },
+    runs_allowed: function (p) { return n(pt(p).r); }, pitches_thrown: function (p) { const x = pt(p); return n(x.pc != null ? x.pc : x.p); },
+  };
+
+  function tableFor(game) { const sp = SPORT[game && game.league] || 'football'; return sp === 'basketball' ? NBA_FN : sp === 'baseball' ? MLB_FN : STAT_FN; }
+  function supportedStat(stat, game) {
+    if (game) { const t = tableFor(game); return !!t[stat] || (stat === 'fantasy_points' && t !== MLB_FN); }
+    return stat === 'fantasy_points' || !!STAT_FN[stat] || !!NBA_FN[stat] || !!MLB_FN[stat];
+  }
 
   /* returns {status:'ok'|'noplayer'|'unsupported', value, player} */
   function statValue(game, playerName, stat, opts) {
     opts = opts || {};
-    if (!supportedStat(stat)) return { status: 'unsupported', value: null, player: null };
+    if (!supportedStat(stat, game)) return { status: 'unsupported', value: null, player: null };
     const p = findPlayer(game.players || [], playerName, opts.team);
     if (!p) return { status: 'noplayer', value: 0, player: null };
-    const value = stat === 'fantasy_points' ? fantasyPoints(p, opts.fantasy) : STAT_FN[stat](p);
+    const sport = SPORT[game.league] || 'football';
+    let value;
+    if (stat === 'fantasy_points') value = sport === 'basketball' ? nbaFantasy(p, opts.fantasy) : fantasyPoints(p, opts.fantasy);
+    else value = tableFor(game)[stat](p, game);
+    if (value == null) return { status: 'unsupported', value: null, player: p };
     return { status: 'ok', value: Math.round(value * 100) / 100, player: p };
   }
 
@@ -260,6 +416,16 @@
   function statLine(p) {
     if (!p) return '';
     const out = [];
+    if (p.stats && p.stats.box) {
+      const b = p.stats.box;
+      return n(b.pts) + ' pts, ' + n(b.reb) + ' reb, ' + n(b.ast) + ' ast, ' + n(b.tp_m) + ' 3PM, ' + n(b.stl) + ' stl, ' + n(b.blk) + ' blk, ' + n(b.to) + ' TO · ' + n(b.min) + ' min';
+    }
+    if (p.stats && (p.stats.batting || p.stats.pitching)) {
+      const b = p.stats.batting, q = p.stats.pitching;
+      if (b && b.ab != null) out.push(n(b.h) + '-for-' + n(b.ab) + ', ' + n(b.r) + ' R, ' + n(b.hr) + ' HR, ' + n(b.rbi) + ' RBI, ' + n(b.bb) + ' BB, ' + n(b.k) + ' K');
+      if (q && q.ip != null) out.push(String(q.ip) + ' IP, ' + n(q.h) + ' H, ' + n(q.er) + ' ER, ' + n(q.k) + ' K, ' + n(q.bb) + ' BB');
+      return out.join(' · ');
+    }
     const pa = cat(p, 'passing'), ru = cat(p, 'rushing'), re = cat(p, 'receiving'), k = cat(p, 'kicking'), d = cat(p, 'defensive');
     if (pa['c/att_att'] != null) out.push(n(pa['c/att_made']) + '/' + n(pa['c/att_att']) + ' pass, ' + n(pa.yds) + ' yds, ' + n(pa.td) + ' TD, ' + n(pa.int) + ' INT');
     if (ru.car != null) out.push(n(ru.car) + ' car, ' + n(ru.yds) + ' rush yds, ' + n(ru.td) + ' TD');
@@ -297,7 +463,20 @@
     return { decided: true, match: playScorerMatches(play, playerName), play: play };
   }
 
+  /* NBA "first basket": the first made field goal (free throws don't count). Needs the first few scoring plays. */
+  function firstBasket(game, playerName) {
+    const plays = (game.scoringPlays || []).filter(function (sp) { return !/free throw/i.test(sp.text) && !/free throw/i.test(sp.type); });
+    if (!plays.length) return { decided: false, match: false, play: null };
+    const play = plays[0];
+    const who = normName(String(play.text || '').split(/\s+(?:makes|made|hits)\b/i)[0]), q = normName(playerName);
+    if (!q) return { decided: true, match: false, play: play };
+    const qt = q.split(' '), last = qt[qt.length - 1];
+    const match = who === q || who.indexOf(q) >= 0 || (qt.length > 1 ? new RegExp('(^| )' + qt[0][0] + '[a-z]* ' + last + '$').test(who) : new RegExp('(^| )' + last + '$').test(who));
+    return { decided: true, match: match, play: play };
+  }
+
   return {
+    SPORT: SPORT, firstBasket: firstBasket,
     n: n, normName: normName, findPlayer: findPlayer, parseStatLine: parseStatLine,
     normalizeEvent: normalizeEvent, normalizeSummary: normalizeSummary,
     statValue: statValue, supportedStat: supportedStat, fantasyPoints: fantasyPoints,

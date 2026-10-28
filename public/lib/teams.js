@@ -1,7 +1,7 @@
-/* Team tables + fuzzy team-name matching for NFL and college football (works in Node and the browser).
- *  - NFL: fixed 32-team table.
+/* Team tables + fuzzy team-name matching for NFL, college football, NBA and MLB (works in Node and the browser).
+ *  - NFL / NBA / MLB: fixed tables (a team ESPN sends that isn't in a table registers itself, so nothing breaks).
  *  - CFB: ~134 FBS teams register themselves from ESPN game data (registerGame), so nothing goes stale.
- *  matchTeam(text, league)  league = 'nfl' | 'cfb' | undefined (undefined tries NFL first, then CFB).
+ *  matchTeam(text, league)  league = 'nfl' | 'cfb' | 'nba' | 'mlb' | undefined (undefined tries NFL, then CFB; NBA / MLB need an explicit league).
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
@@ -43,6 +43,72 @@
     ['WSH', 'Washington', 'Commanders', 'wsh,was,wft,washington football team', 1],
   ];
 
+  // [abbr, city, nickname, extra aliases (comma separated), hasUniqueCity] — abbreviations follow ESPN; others are aliases.
+  const NBA = [
+    ['ATL', 'Atlanta', 'Hawks', 'atl', 1],
+    ['BOS', 'Boston', 'Celtics', 'bos,celts', 1],
+    ['BKN', 'Brooklyn', 'Nets', 'bkn,bk,bro', 1],
+    ['CHA', 'Charlotte', 'Hornets', 'cha,cho', 1],
+    ['CHI', 'Chicago', 'Bulls', 'chi', 1],
+    ['CLE', 'Cleveland', 'Cavaliers', 'cle,cavs', 1],
+    ['DAL', 'Dallas', 'Mavericks', 'dal,mavs', 1],
+    ['DEN', 'Denver', 'Nuggets', 'den', 1],
+    ['DET', 'Detroit', 'Pistons', 'det', 1],
+    ['GS', 'Golden State', 'Warriors', 'gs,gsw,golden st,dubs', 1],
+    ['HOU', 'Houston', 'Rockets', 'hou', 1],
+    ['IND', 'Indiana', 'Pacers', 'ind', 1],
+    ['LAC', 'Los Angeles', 'Clippers', 'lac,la clippers,los angeles clippers,clips', 0],
+    ['LAL', 'Los Angeles', 'Lakers', 'lal,la lakers,los angeles lakers', 0],
+    ['MEM', 'Memphis', 'Grizzlies', 'mem,grizz', 1],
+    ['MIA', 'Miami', 'Heat', 'mia', 1],
+    ['MIL', 'Milwaukee', 'Bucks', 'mil', 1],
+    ['MIN', 'Minnesota', 'Timberwolves', 'min,wolves,twolves,t wolves', 1],
+    ['NO', 'New Orleans', 'Pelicans', 'no,nop,nola,pels', 1],
+    ['NY', 'New York', 'Knicks', 'ny,nyk,knickerbockers', 1],
+    ['OKC', 'Oklahoma City', 'Thunder', 'okc,oklahoma city thunder', 1],
+    ['ORL', 'Orlando', 'Magic', 'orl', 1],
+    ['PHI', 'Philadelphia', '76ers', 'phi,sixers,philly,seventy sixers', 1],
+    ['PHX', 'Phoenix', 'Suns', 'phx,pho', 1],
+    ['POR', 'Portland', 'Trail Blazers', 'por,blazers,trailblazers,trail blazers', 1],
+    ['SAC', 'Sacramento', 'Kings', 'sac', 1],
+    ['SA', 'San Antonio', 'Spurs', 'sa,sas', 1],
+    ['TOR', 'Toronto', 'Raptors', 'tor', 1],
+    ['UTAH', 'Utah', 'Jazz', 'utah,uta', 1],
+    ['WSH', 'Washington', 'Wizards', 'wsh,was', 1],
+  ];
+  const MLB = [
+    ['ARI', 'Arizona', 'Diamondbacks', 'ari,az,dbacks,d backs,snakes', 1],
+    ['ATH', 'Athletics', 'Athletics', 'ath,oak,as,a s,oakland,oakland athletics,oakland as,sacramento athletics,sacramento', 1],
+    ['ATL', 'Atlanta', 'Braves', 'atl', 1],
+    ['BAL', 'Baltimore', 'Orioles', 'bal,os,o s', 1],
+    ['BOS', 'Boston', 'Red Sox', 'bos,redsox', 1],
+    ['CHC', 'Chicago', 'Cubs', 'chc,chi cubs,chicago cubs', 0],
+    ['CHW', 'Chicago', 'White Sox', 'chw,cws,chisox,chi white sox,chicago white sox,whitesox', 0],
+    ['CIN', 'Cincinnati', 'Reds', 'cin', 1],
+    ['CLE', 'Cleveland', 'Guardians', 'cle', 1],
+    ['COL', 'Colorado', 'Rockies', 'col', 1],
+    ['DET', 'Detroit', 'Tigers', 'det', 1],
+    ['HOU', 'Houston', 'Astros', 'hou', 1],
+    ['KC', 'Kansas City', 'Royals', 'kc,kcr', 1],
+    ['LAA', 'Los Angeles', 'Angels', 'laa,ana,la angels,los angeles angels,anaheim,anaheim angels', 0],
+    ['LAD', 'Los Angeles', 'Dodgers', 'lad,la dodgers,los angeles dodgers', 0],
+    ['MIA', 'Miami', 'Marlins', 'mia', 1],
+    ['MIL', 'Milwaukee', 'Brewers', 'mil', 1],
+    ['MIN', 'Minnesota', 'Twins', 'min', 1],
+    ['NYM', 'New York', 'Mets', 'nym,ny mets,new york mets', 0],
+    ['NYY', 'New York', 'Yankees', 'nyy,ny yankees,new york yankees,yanks', 0],
+    ['PHI', 'Philadelphia', 'Phillies', 'phi,philly', 1],
+    ['PIT', 'Pittsburgh', 'Pirates', 'pit', 1],
+    ['SD', 'San Diego', 'Padres', 'sd,sdp', 1],
+    ['SF', 'San Francisco', 'Giants', 'sf,sfg,sf giants,san francisco giants', 1],
+    ['SEA', 'Seattle', 'Mariners', 'sea,ms', 1],
+    ['STL', 'St. Louis', 'Cardinals', 'stl,saint louis,cards,st louis cardinals', 1],
+    ['TB', 'Tampa Bay', 'Rays', 'tb,tbr,tampa,tampa bay rays', 1],
+    ['TEX', 'Texas', 'Rangers', 'tex', 1],
+    ['TOR', 'Toronto', 'Blue Jays', 'tor,bluejays,jays', 1],
+    ['WSH', 'Washington', 'Nationals', 'wsh,was,wsn,nats', 1],
+  ];
+
   /* Common college slang -> text that matches an ESPN short name / location (after norm). CFB only. */
   const CFB_SLANG = {
     'bama': 'alabama', 'roll tide': 'alabama', 'uga': 'georgia', 'ole miss': 'ole miss', 'olemiss': 'ole miss', 'mississippi': 'ole miss',
@@ -70,7 +136,8 @@
   }
 
   function makeRegistry() { return { EXACT: Object.create(null), PRI: Object.create(null), LONG: [], dirty: false, INFO: Object.create(null), SEEN: Object.create(null), BLOCK: Object.create(null) }; }
-  const REG = { nfl: makeRegistry(), cfb: makeRegistry() };
+  const REG = { nfl: makeRegistry(), cfb: makeRegistry(), nba: makeRegistry(), mlb: makeRegistry() };
+  const LEAGUES = ['nfl', 'cfb', 'nba', 'mlb'];
 
   /* priority: 3 = abbreviation, 2 = city/short name/full name, 1 = nickname. Equal-priority clashes become ambiguous and are dropped. */
   function addAlias(R, alias, abbr, pri) {
@@ -90,16 +157,20 @@
     R.dirty = false;
   }
 
-  /* NFL: static table */
-  DATA.forEach(function (row) {
-    const abbr = row[0], city = row[1], nick = row[2], extra = row[3], uniq = row[4], R = REG.nfl;
-    R.INFO[abbr] = { abbr: abbr, city: city, nick: nick, full: city + ' ' + nick };
-    addAlias(R, city + ' ' + nick, abbr, 2); addAlias(R, nick, abbr, 2); addAlias(R, abbr, abbr, 3);
-    if (uniq) addAlias(R, city, abbr, 2);
-    extra.split(',').forEach(function (e) { if (e) addAlias(R, e, abbr, 2); });
-  });
+  /* Fixed tables: NFL, NBA, MLB */
+  function loadTable(league, rows) {
+    const R = REG[league];
+    rows.forEach(function (row) {
+      const abbr = row[0], city = row[1], nick = row[2], extra = row[3], uniq = row[4];
+      R.INFO[abbr] = { abbr: abbr, city: city, nick: nick, full: city + ' ' + nick };
+      addAlias(R, city + ' ' + nick, abbr, 2); addAlias(R, nick, abbr, 2); addAlias(R, abbr, abbr, 3);
+      if (uniq) addAlias(R, city, abbr, 2);
+      extra.split(',').forEach(function (e) { if (e) addAlias(R, e, abbr, 2); });
+    });
+  }
+  loadTable('nfl', DATA); loadTable('nba', NBA); loadTable('mlb', MLB);
 
-  /* CFB: register one team {abbr, name, short, nick, location}. Idempotent. */
+  /* Register one team {abbr, name, short, nick, location} (college teams, or a pro team missing from a table). Idempotent. */
   function registerTeam(league, t) {
     const R = REG[league]; if (!R || !t || !t.abbr) return;
     const abbr = t.abbr, key = abbr + '|' + (t.name || '') + '|' + (t.short || '');
@@ -116,9 +187,14 @@
 
   function registerGame(g) {
     if (!g) return;
-    const league = g.league === 'cfb' ? 'cfb' : 'nfl';
-    if (league !== 'cfb') return;                  // NFL uses the fixed table
-    ['away', 'home'].forEach(function (s) { if (g[s]) registerTeam('cfb', g[s]); });
+    const league = LEAGUES.indexOf(g.league) >= 0 ? g.league : 'nfl';
+    if (league === 'nfl') return;                  // NFL uses the fixed table
+    ['away', 'home'].forEach(function (s) {
+      const t = g[s]; if (!t) return;
+      // pro teams are already in a table: only register one ESPN sends that we don't know yet
+      if (league !== 'cfb' && REG[league].INFO[t.abbr]) return;
+      registerTeam(league, t);
+    });
   }
 
   /* "S Carolina" / "W Virginia" / "C Michigan" -> south / west / central ... (college slips abbreviate the direction) */
@@ -152,17 +228,22 @@
 
   /* strict = exact team names / abbreviations only, no fuzzy "contains" matching (used when crossing leagues as a fallback) */
   function matchTeam(str, league, strict) {
-    if (league === 'nfl' || league === 'cfb') return matchIn(REG[league], str, league, strict);
+    if (REG[league]) return matchIn(REG[league], str, league, strict);
+    // no league given: football only (NBA / MLB names overlap too much, so those need an explicit league)
     return matchIn(REG.nfl, str, 'nfl', strict) || matchIn(REG.cfb, str, 'cfb', strict);
   }
 
-  function infoFor(abbr, league) { return (league && REG[league] && REG[league].INFO[abbr]) || REG.nfl.INFO[abbr] || REG.cfb.INFO[abbr] || null; }
+  function infoFor(abbr, league) {
+    if (league && REG[league] && REG[league].INFO[abbr]) return REG[league].INFO[abbr];
+    for (let i = 0; i < LEAGUES.length; i++) if (REG[LEAGUES[i]].INFO[abbr]) return REG[LEAGUES[i]].INFO[abbr];
+    return null;
+  }
   function name(abbr, league) {
     const i = infoFor(abbr, league);
     if (!i) return abbr || '';
-    return league === 'cfb' || (!league && !REG.nfl.INFO[abbr]) ? (i.short || i.city || abbr) : i.nick;
+    return league === 'cfb' || (!league && !REG.nfl.INFO[abbr] && !REG.nba.INFO[abbr] && !REG.mlb.INFO[abbr]) ? (i.short || i.city || abbr) : (i.nick || i.short || i.city || abbr);
   }
   function fullName(abbr, league) { const i = infoFor(abbr, league); return i ? i.full : abbr || ''; }
 
-  return { matchTeam: matchTeam, name: name, fullName: fullName, norm: norm, registerGame: registerGame, registerTeam: registerTeam, INFO: REG.nfl.INFO, CFB_INFO: REG.cfb.INFO };
+  return { matchTeam: matchTeam, name: name, fullName: fullName, norm: norm, registerGame: registerGame, registerTeam: registerTeam, LEAGUES: LEAGUES, INFO: REG.nfl.INFO, CFB_INFO: REG.cfb.INFO, NBA_INFO: REG.nba.INFO, MLB_INFO: REG.mlb.INFO };
 });

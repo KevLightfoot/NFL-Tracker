@@ -247,7 +247,7 @@ test('server: config, static files, traversal guard, parse, games, game, resolve
     if (url.indexOf('api.openai.com/v1/chat/completions') >= 0) {
       return json({ choices: [{ message: { tool_calls: [{ type: 'function', function: { name: 'submit_bet', arguments: JSON.stringify({ bet_type: 'parlay', wager: 10, payout: 122.5, legs: [{ raw_text: 'Jets ML', market: 'moneyline', team: 'Jets' }] }) } }] } }] });
     }
-    if (url.indexOf('college-football') >= 0 && url.indexOf('/scoreboard') >= 0) return json({ events: [] }); // NFL-only fixtures
+    if ((url.indexOf('college-football') >= 0 || url.indexOf('/basketball/') >= 0 || url.indexOf('/baseball/') >= 0) && url.indexOf('/scoreboard') >= 0) return json({ events: [] }); // NFL-only fixtures
     if (url.indexOf('/scoreboard') >= 0) return json(sb);
     if (url.indexOf('/summary?event=401') >= 0) return json(F.liveGame);
     if (url.indexOf('/roster') >= 0) return json({ athletes: [{ position: 'offense', items: [{ displayName: 'Garrett Wilson' }, { displayName: 'Breece Hall' }] }] });

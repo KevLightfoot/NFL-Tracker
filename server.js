@@ -4,7 +4,7 @@
  * Parlay Tracker server — zero dependencies (Node 18+).
  *   POST /api/parse    screenshot(s) -> structured bet (OpenAI vision)
  *   GET  /api/config   {hasServerKey, model}
- *   GET  /api/games    NFL + college football games (scoreboard, ~3 weeks window)
+ *   GET  /api/games    NFL, college football, NBA and MLB games (scoreboards: ~3 weeks of football, about a week of NBA / MLB)
  *   GET  /api/game/:id live box score + scoring plays for one game
  *   POST /api/resolve  find the game (and team) for each leg
  *   GET  /api/cron/check   run the push-notification checker now (CRON_SECRET)
@@ -30,9 +30,13 @@ const PORT = parseInt(process.env.PORT, 10) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 const MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || 'https://kevlightfoot.github.io';
-const ESPN_BASE = 'https://site.api.espn.com/apis/site/v2/sports/football';
-const ESPN_ALT_BASE = 'https://site.web.api.espn.com/apis/site/v2/sports/football';
-const LEAGUE_PATH = { nfl: 'nfl', cfb: 'college-football' };
+const ESPN_BASE = 'https://site.api.espn.com/apis/site/v2/sports';
+const ESPN_ALT_BASE = 'https://site.web.api.espn.com/apis/site/v2/sports';
+const LEAGUES = { nfl: { sport: 'football', path: 'nfl' }, cfb: { sport: 'football', path: 'college-football' }, nba: { sport: 'basketball', path: 'nba' }, mlb: { sport: 'baseball', path: 'mlb' } };
+const LEAGUE_IDS = Object.keys(LEAGUES);
+const isLeague = function (x) { return typeof x === 'string' && Object.prototype.hasOwnProperty.call(LEAGUES, x); };
+const leagueUrl = function (base, lg) { return base + '/' + LEAGUES[lg].sport + '/' + LEAGUES[lg].path; };
+const DAILY = { nba: true, mlb: true };     // leagues that play every day: "this week" means roughly yesterday to day after tomorrow
 // ESPN college scoreboards only list every game when a conference group is given: 80 = FBS, 81 = FCS (set CFB_GROUPS=80,81 to include FCS).
 const CFB_GROUPS = (process.env.CFB_GROUPS || '80').split(',').map(function (x) { return x.trim(); }).filter(Boolean);
 const PUBLIC = path.join(__dirname, 'public');
@@ -66,12 +70,14 @@ async function getGames() {
     const day = function (off) { return new Date(Date.now() + off * 864e5).toISOString().slice(0, 10).replace(/-/g, ''); };
     const range = day(-10) + '-' + day(14);
     const jobs = [
-      { league: 'nfl', week: true, url: ESPN_BASE + '/nfl/scoreboard?limit=100' },
-      { league: 'nfl', week: false, url: ESPN_BASE + '/nfl/scoreboard?dates=' + range + '&limit=300' },
+      { league: 'nfl', week: true, url: leagueUrl(ESPN_BASE, 'nfl') + '/scoreboard?limit=100' },
+      { league: 'nfl', week: false, url: leagueUrl(ESPN_BASE, 'nfl') + '/scoreboard?dates=' + range + '&limit=300' },
+      { league: 'nba', week: false, url: leagueUrl(ESPN_BASE, 'nba') + '/scoreboard?dates=' + day(-3) + '-' + day(5) + '&limit=200' },
+      { league: 'mlb', week: false, url: leagueUrl(ESPN_BASE, 'mlb') + '/scoreboard?dates=' + day(-3) + '-' + day(4) + '&limit=300' },
     ];
     CFB_GROUPS.forEach(function (grp) {
-      jobs.push({ league: 'cfb', week: true, url: ESPN_BASE + '/college-football/scoreboard?groups=' + grp + '&limit=400' });
-      jobs.push({ league: 'cfb', week: false, url: ESPN_BASE + '/college-football/scoreboard?dates=' + range + '&groups=' + grp + '&limit=600' });
+      jobs.push({ league: 'cfb', week: true, url: leagueUrl(ESPN_BASE, 'cfb') + '/scoreboard?groups=' + grp + '&limit=400' });
+      jobs.push({ league: 'cfb', week: false, url: leagueUrl(ESPN_BASE, 'cfb') + '/scoreboard?dates=' + range + '&groups=' + grp + '&limit=600' });
     });
     const rs = await Promise.allSettled(jobs.map(function (j) { return getJSON(j.url); }));
     const byKey = new Map(), thisWeek = new Set();
@@ -87,17 +93,22 @@ async function getGames() {
       });
     });
     if (!byKey.size) throw new Error('Could not reach the ESPN scoreboard (' + (firstErr && firstErr.message || 'no data') + ')');
+    const now = Date.now();
     return Array.from(byKey.entries())
-      .map(function (kv) { kv[1].thisWeek = thisWeek.has(kv[0]); return kv[1]; })
+      .map(function (kv) {
+        const g = kv[1], t = Date.parse(g.date);
+        g.thisWeek = thisWeek.has(kv[0]) || (!!DAILY[g.league] && !isNaN(t) && t > now - 30 * 36e5 && t < now + 54 * 36e5);
+        return g;
+      })
       .sort(function (a, b) { return new Date(a.date) - new Date(b.date); });
   });
 }
 
 /* Which league(s) could this game id belong to? A hint wins; otherwise look it up on the scoreboard; otherwise try both. */
 async function leaguesFor(id, hint) {
-  if (hint === 'nfl' || hint === 'cfb') return [hint];
+  if (isLeague(hint)) return [hint];
   try { const g = (await getGames()).find(function (x) { return x.id === id; }); if (g) return [g.league]; } catch (e) { /* scoreboard down */ }
-  return ['nfl', 'cfb'];
+  return LEAGUE_IDS.slice();
 }
 
 async function getGame(id, hint) {
@@ -108,7 +119,7 @@ async function getGame(id, hint) {
   for (const lg of await leaguesFor(id, hint)) {
     for (const base of [ESPN_BASE, ESPN_ALT_BASE]) {
       try {
-        const r = await getJSON(base + '/' + LEAGUE_PATH[lg] + '/summary?event=' + id);
+        const r = await getJSON(leagueUrl(base, lg) + '/summary?event=' + id);
         if (r && (r.header || r.boxscore)) { j = r; league = lg; break; }
       } catch (e) { lastErr = e; }
     }
@@ -139,9 +150,9 @@ async function getGame(id, hint) {
 }
 
 async function getRoster(teamId, league) {
-  league = league === 'cfb' ? 'cfb' : 'nfl';
+  league = isLeague(league) ? league : 'nfl';
   return cached('roster' + league + teamId, 12 * 3600 * 1000, async function () {
-    const j = await getJSON(ESPN_BASE + '/' + LEAGUE_PATH[league] + '/teams/' + teamId + '/roster');
+    const j = await getJSON(leagueUrl(ESPN_BASE, league) + '/teams/' + teamId + '/roster');
     const out = [];
     (j.athletes || []).forEach(function (grp) {
       (grp.items || [grp]).forEach(function (a) { const nm = a.displayName || a.fullName; if (nm) out.push({ name: nm }); });
@@ -158,9 +169,9 @@ function pickGame(cands, leg) {
     const want = String(leg.game_date).slice(0, 10);
     const byDate = cands.filter(function (g) {
       if (!g.date) return false;
-      const d = new Date(g.date);
-      const et = new Date(d.getTime() - 5 * 3600 * 1000).toISOString().slice(0, 10); // rough ET
-      return d.toISOString().slice(0, 10) === want || et === want;
+      const t = new Date(g.date).getTime();
+      // the slip shows the game's local date: accept it in UTC and in the US time zones (a 10pm Pacific game is already "tomorrow" in UTC)
+      return [0, 4, 5, 6, 7, 8].some(function (h) { return new Date(t - h * 3600 * 1000).toISOString().slice(0, 10) === want; });
     });
     if (byDate.length) cands = byDate;
     if (cands.length === 1) return cands[0];
@@ -177,9 +188,9 @@ function pickGame(cands, leg) {
 }
 
 async function resolveLeg(leg, games) {
-  const hint = leg.league === 'nfl' || leg.league === 'cfb' ? leg.league : null;
+  const hint = isLeague(leg.league) ? leg.league : null;
   let res = await resolveIn(leg, games, hint);
-  if (!res.gameId && hint) res = await resolveIn(leg, games, null, true);   // wrong hint? retry both leagues, but only on exact names // the league hint can be wrong — retry across both
+  if (!res.gameId && hint) res = await resolveIn(leg, games, null, true);   // the league hint can be wrong — retry across every league, but only on exact names
   return res;
 }
 
@@ -228,7 +239,13 @@ const STATS = ['passing_yards', 'passing_tds', 'passing_attempts', 'passing_comp
   'rushing_yards', 'rushing_attempts', 'rushing_tds', 'longest_rush', 'receiving_yards', 'receptions', 'receiving_tds',
   'longest_reception', 'receiving_targets', 'rush_rec_yards', 'pass_rush_yards', 'rush_rec_tds', 'total_tds', 'fantasy_points',
   'fg_made', 'fg_attempted', 'longest_fg', 'xp_made', 'kicking_points', 'tackles_assists', 'solo_tackles', 'sacks',
-  'def_interceptions', 'other'];
+  'def_interceptions',
+  'points', 'rebounds', 'assists', 'three_pointers_made', 'three_pointers_attempted', 'field_goals_made', 'field_goals_attempted', 'free_throws_made',
+  'free_throws_attempted', 'steals', 'blocks', 'turnovers', 'steals_blocks', 'pts_reb', 'pts_ast', 'reb_ast', 'pts_reb_ast', 'offensive_rebounds',
+  'defensive_rebounds', 'personal_fouls', 'minutes', 'double_double', 'triple_double',
+  'hits', 'runs', 'rbis', 'home_runs', 'walks', 'batter_strikeouts', 'at_bats', 'hits_runs_rbis', 'singles', 'doubles', 'triples', 'total_bases', 'stolen_bases',
+  'pitcher_strikeouts', 'pitching_outs', 'earned_runs', 'hits_allowed', 'walks_allowed', 'runs_allowed', 'pitches_thrown',
+  'other'];
 
 const NUM_OR_NULL = { type: ['number', 'null'] };
 const STR_OR_NULL = { type: ['string', 'null'] };
@@ -253,19 +270,19 @@ const TOOL = {
           type: 'object',
           properties: {
             raw_text: { type: 'string', description: 'The leg exactly as printed on the slip (one line).' },
-            market: { type: 'string', enum: ['moneyline', 'spread', 'total', 'team_total', 'player_prop', 'anytime_td', 'first_td', 'last_td', 'other'] },
+            market: { type: 'string', enum: ['moneyline', 'spread', 'total', 'team_total', 'player_prop', 'anytime_td', 'first_td', 'last_td', 'first_basket', 'other'] },
             team: Object.assign({ description: 'moneyline/spread/team_total: the team bet on. player_prop/td: the player\'s team if shown or certain. Else null.' }, STR_OR_NULL),
             player: Object.assign({ description: 'Full player name as shown (keep initials if that is all the slip shows).' }, STR_OR_NULL),
             stat: { type: ['string', 'null'], enum: STATS.concat([null]), description: 'player_prop only. Use "other" if the stat is not in the list.' },
             side: { type: ['string', 'null'], enum: ['over', 'under', 'yes', null] },
-            line: Object.assign({ description: 'Spread: signed number for the team bet on (+7.5, -3). Total/prop: the number. For "N+" ladder lines use over with line N-0.5.' }, NUM_OR_NULL),
+            line: Object.assign({ description: 'Spread / run line: signed number for the team bet on (+7.5, -3, -1.5). Total/prop: the number. For "N+" ladder lines use over with line N-0.5.' }, NUM_OR_NULL),
             odds: Object.assign({ description: 'American odds for this leg if shown.' }, STR_OR_NULL),
-            league: { type: ['string', 'null'], enum: ['nfl', 'cfb', null], description: 'nfl = pro football teams/players. cfb = college football (NCAAF): college teams like Georgia, Ohio State, Notre Dame, rankings like "#5", or NCAAF/CFB labels. null if you cannot tell. A slip usually stays in one league: if the other legs are clearly college, mark ambiguous ones (e.g. "S Carolina", "Texas") cfb too.' },
+            league: { type: ['string', 'null'], enum: ['nfl', 'cfb', 'nba', 'mlb', null], description: 'nfl = pro football. cfb = college football (NCAAF): college teams like Georgia, Ohio State, Notre Dame, rankings like "#5", or NCAAF/CFB labels. nba = pro basketball (Lakers, Celtics, ...). mlb = pro baseball (Yankees, Dodgers, ...). null if you cannot tell or the sport is not one of these. A slip usually stays in one league unless it is a mixed-sport parlay: if the other legs are clearly college, mark ambiguous ones (e.g. "S Carolina", "Texas") cfb too.' },
             away_team: Object.assign({ description: 'Away team of the game this leg is in, if the matchup is shown.' }, STR_OR_NULL),
             home_team: Object.assign({ description: 'Home team of the game this leg is in, if the matchup is shown.' }, STR_OR_NULL),
             game_date: Object.assign({ description: 'ISO date (YYYY-MM-DD) of the game if the slip shows a date or day, else null.' }, STR_OR_NULL),
-            period: { type: 'string', enum: ['full', '1h', '2h', 'q1', 'q2', 'q3', 'q4'], description: 'Default full. 1st-half / quarter markets use the matching value.' },
-            fantasy_system: { type: ['string', 'null'], enum: ['dk', 'fd', 'ppr', 'half', 'std', null], description: 'fantasy_points only: DraftKings->dk, FanDuel->fd, otherwise ppr.' },
+            period: { type: 'string', enum: ['full', '1h', '2h', 'q1', 'q2', 'q3', 'q4', 'f3', 'f5', 'f7', 'i1'], description: 'Default full. Football / basketball: 1st-half and quarter markets use the matching value. Baseball: "First 5 Innings" = f5 (also f3, f7), "1st Inning" (incl. NRFI / YRFI) = i1.' },
+            fantasy_system: { type: ['string', 'null'], enum: ['dk', 'fd', 'ppr', 'half', 'std', null], description: 'fantasy_points only: DraftKings->dk, FanDuel->fd, otherwise ppr (basketball: anything that is not dk is scored the FanDuel / PrizePicks way).' },
             notes: STR_OR_NULL,
           },
           required: ['raw_text', 'market'],
@@ -288,15 +305,19 @@ const TOOL = {
 function systemPrompt() {
   const today = new Date().toISOString().slice(0, 10);
   return [
-    'You read screenshots of NFL and college football (NCAAF / CFB) betting slips from ANY sportsbook or app (DraftKings, FanDuel, BetMGM, Caesars, ESPN BET, bet365, Hard Rock, Fanatics, PrizePicks/Underdog-style cards, paper tickets, etc.) in any layout, and return every leg through the submit_bet tool.',
+    'You read screenshots of sports betting slips — NFL, college football (NCAAF / CFB), NBA and MLB — from ANY sportsbook or app (DraftKings, FanDuel, BetMGM, Caesars, ESPN BET, bet365, Hard Rock, Fanatics, PrizePicks/Underdog-style cards, paper tickets, etc.) in any layout, and return every leg through the submit_bet tool.',
     'Today is ' + today + '.',
     'Rules:',
     '- Extract EVERY leg. Never invent legs. If the slip states a leg count (e.g. "5 Leg Parlay") make sure you return that many; otherwise add a warning.',
-    '- Set league on every leg: "cfb" for college football (college teams such as Georgia, Ohio State, Alabama; rankings like #5; NCAAF/CFB labels), "nfl" for pro teams. A slip can mix both. Use team names exactly as printed, without the ranking number.',
+    '- Set league on every leg: "cfb" for college football (college teams such as Georgia, Ohio State, Alabama; rankings like #5; NCAAF/CFB labels), "nfl" for pro football, "nba" for NBA basketball, "mlb" for MLB baseball. A slip can mix leagues. Use team names exactly as printed, without the ranking number. Sports we cannot track (NHL, college basketball, soccer, tennis, UFC, ...): still return the leg with league null and market "other", and add a warning.',
     '- Same-game parlays / bet builders: list each selection as its own leg, with the matchup on every leg.',
-    '- Markets: moneyline; spread (line is signed for the team bet on); total = game over/under; team_total = one team\'s points over/under; player_prop for every player stat (passing, rushing, receiving, receptions, fantasy points, kicking, defense, combined stats); anytime_td / first_td / last_td for scorer markets; period = 1h/2h/q1..q4 for half or quarter markets. Use "other" only when nothing fits and explain in notes.',
-    '- Ladder / alt lines like "100+ Receiving Yards" or "To Record 3+ Receptions": side=over, line=N-0.5 (99.5, 2.5). "To score 2+ TDs": player_prop, stat=total_tds, over 1.5.',
+    '- Markets: moneyline; spread (point spread, or MLB run line — the line is signed for the team bet on); total = game over/under (points, or runs in baseball); team_total = one team\'s points/runs over/under; player_prop for every player stat; anytime_td / first_td / last_td for football scorer markets; first_basket for NBA "First Basket / First Field Goal" (player, side yes); period = 1h/2h/q1..q4 for half or quarter markets (football and basketball). Baseball: "First 5 Innings" / "1st 5" = period f5 (also f3, f7); "1st Inning" markets = period i1, and "Run in the 1st Inning" / YRFI = total over 0.5 with period i1, NRFI = total under 0.5 with period i1 (fill away_team and home_team if shown). Use "other" only when nothing fits and explain in notes.',
+    '- Football player props: passing / rushing / receiving yards, TDs, receptions, kicking, defense, combined stats, fantasy points.',
+    '- Basketball player props: points, rebounds, assists, three_pointers_made, steals, blocks, turnovers, pts_reb, pts_ast, reb_ast, pts_reb_ast (PRA), steals_blocks, field goals / free throws made or attempted, minutes, fantasy_points. "To record a double-double" => player_prop stat double_double, side yes (triple_double likewise).',
+    '- Baseball hitter props: hits, runs, rbis, home_runs, walks, batter_strikeouts, total_bases, singles, doubles, triples, stolen_bases, hits_runs_rbis (Hits + Runs + RBIs). "To Hit a Home Run" => player_prop stat home_runs, side over, line 0.5. Pitcher props: pitcher_strikeouts, pitching_outs ("Outs Recorded"), earned_runs, hits_allowed, walks_allowed, runs_allowed, pitches_thrown. Never mix up a hitter\'s hits / walks / strikeouts with a pitcher\'s hits / walks allowed / strikeouts.',
+    '- Ladder / alt lines like "100+ Receiving Yards", "25+ Points", "To Record 3+ Hits": side=over, line=N-0.5 (99.5, 24.5, 2.5). "To score 2+ TDs": player_prop, stat=total_tds, over 1.5.',
     '- "Anytime Touchdown Scorer" => market anytime_td, side yes. "Player to score 2+ touchdowns" => total_tds over 1.5.',
+    '- When the slip shows when the game is (a date, "Today", "Tomorrow", a weekday, a start time), set game_date as YYYY-MM-DD from today\'s date. This matters in baseball and basketball, where the same teams can play on several days in a row.',
     '- Fix obvious OCR damage but never change numbers. Use full team names or nicknames exactly as shown.',
     '- Money: numbers only, no currency symbols. wager = stake/risk. payout = TOTAL return including stake. If the slip only gives "To Win" profit, put it in to_win and leave payout null.',
     '- Pick\'em / DFS cards (PrizePicks, Underdog, etc.): each pick is a leg; More/Higher = over, Less/Lower = under; wager = entry amount, payout = the payout/"to win" total shown.',

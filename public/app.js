@@ -247,6 +247,7 @@
     const x = typeof v === 'number' ? v : parseFloat(String(v).replace(/[^0-9.\-]/g, ''));
     return isFinite(x) ? x : null;
   };
+  const LEAGUE_NAMES = { nfl: 'NFL', cfb: 'College football', nba: 'NBA', mlb: 'MLB' };
   const BET_LABEL = { parlay: 'Parlay', same_game_parlay: 'Same Game Parlay', single: 'Single', round_robin: 'Round Robin', teaser: 'Teaser', other: 'Bet' };
 
   /* Underdog/PrizePicks-style wording ("Higher 0.5 Anytime TD") often comes back as a generic prop with an
@@ -270,7 +271,7 @@
     const leg = {
       id: uid(), raw_text: l.raw_text || '', market: l.market || 'other', team: l.team || '', player: l.player || '', stat: l.stat || null,
       side: l.side || null, line: l.line == null ? null : Number(l.line), odds: l.odds || '', away_team: l.away_team || '', home_team: l.home_team || '',
-      league: l.league === 'nfl' || l.league === 'cfb' ? l.league : '',
+      league: LEAGUE_NAMES[l.league] ? l.league : '',
       game_date: l.game_date || '', period: l.period || 'full', fantasy_system: l.fantasy_system || null, notes: l.notes || '',
       gameId: null, teamResolved: null, manual: null, manualValue: null,
     };
@@ -341,7 +342,7 @@
       mid +
       '<div class="l-sub"><span class="detail">' + esc(r.detail) + '</span><span class="game">' +
       esc(r.kind === 'score' ? (r.gameText.split(' · ')[1] || '') : r.gameText) +
-      ((['player_prop', 'anytime_td', 'first_td', 'last_td'].indexOf(leg.market) >= 0 && S.games[leg.gameId] && S.games[leg.gameId].away && S.games[leg.gameId].home) ?
+      ((['player_prop', 'anytime_td', 'first_td', 'last_td', 'first_basket'].indexOf(leg.market) >= 0 && S.games[leg.gameId] && S.games[leg.gameId].away && S.games[leg.gameId].home) ?
         ' <small class="prop-score">' + esc(S.games[leg.gameId].away.abbr + ' ' + S.games[leg.gameId].away.score + '–' + S.games[leg.gameId].home.abbr + ' ' + S.games[leg.gameId].home.score) + '</small>' : '') +
       '</span></div>' +
       more + '</div></li>';
@@ -645,7 +646,9 @@
   async function openLegDialog(p, l) {
     editing = { p: p, l: l };
     const sel = $('#lStat');
-    sel.innerHTML = '<option value="">—</option>' + Object.keys(E.STAT_LABEL).map(function (k) { return '<option value="' + k + '">' + esc(E.STAT_LABEL[k]) + '</option>'; }).join('');
+    sel.innerHTML = '<option value="">—</option>' + Object.keys(E.STAT_GROUPS).map(function (grp) {
+      return '<optgroup label="' + esc(grp) + '">' + E.STAT_GROUPS[grp].map(function (k) { return '<option value="' + k + '">' + esc(E.STAT_LABEL[k]) + '</option>'; }).join('') + '</optgroup>';
+    }).join('');
     $('#legRaw').textContent = l.raw_text ? 'From slip: “' + l.raw_text + '”' : '';
     $('#lMarket').value = l.market; $('#lPeriod').value = l.period || 'full'; $('#lTeam').value = l.team || ''; $('#lPlayer').value = l.player || '';
     $('#lStat').value = l.stat || ''; $('#lSide').value = l.side || ''; $('#lLine').value = l.line == null ? '' : l.line;
@@ -654,10 +657,10 @@
     function fillGames() {
       const want = lgSel.value, keep = gs.value;
       const opts = function (list) { return list.map(function (g) { return '<option value="' + esc(g.id) + '">' + esc(g.away.abbr + ' @ ' + g.home.abbr + ' · ' + dateLabel(g.date)) + '</option>'; }).join(''); };
-      const nfl = S.gamesList.filter(function (g) { return g.league !== 'cfb'; }), cfb = S.gamesList.filter(function (g) { return g.league === 'cfb'; });
-      gs.innerHTML = '<option value="auto">Auto-detect</option>' +
-        (want !== 'cfb' && nfl.length ? '<optgroup label="NFL">' + opts(nfl) + '</optgroup>' : '') +
-        (want !== 'nfl' && cfb.length ? '<optgroup label="College football">' + opts(cfb) + '</optgroup>' : '');
+      gs.innerHTML = '<option value="auto">Auto-detect</option>' + Object.keys(LEAGUE_NAMES).map(function (lk) {
+        const list = S.gamesList.filter(function (g) { return (g.league || 'nfl') === lk; });
+        return want && want !== lk || !list.length ? '' : '<optgroup label="' + esc(LEAGUE_NAMES[lk]) + '">' + opts(list) + '</optgroup>';
+      }).join('');
       if (l.gameId && !Demo.isDemoId(l.gameId) && l.pinned) gs.value = l.gameId;
       if (keep && gs.querySelector('option[value="' + keep + '"]')) gs.value = keep;
     }
