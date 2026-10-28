@@ -430,7 +430,7 @@ test('probe script: reports what it understood from a real-shaped payload', asyn
   const out = (await main([], f, [])).join('\n');
   assert.ok(/NBA/.test(out) && /MLB/.test(out)); assert.ok(/every team abbreviation is in our table/.test(out)); assert.ok(/players found: 4/.test(out));
   assert.ok(/MIN \| PTS \| FG \| 3PT/.test(out), 'prints the real labels'); assert.ok(/play-by-play available.*yes/.test(out));
-  assert.ok(/pts_reb_ast\s+\d+/.test(out) && /total_bases\s+\d+/.test(out), out);
+  assert.ok(/pts_reb_ast=\d+/.test(out) && /total_bases=5/.test(out) && /hit-type check: 3 of 4/.test(out) && /play types seen/.test(out), out);
   const bad = (await main(['nba'], async function () { return { ok: false, status: 500, json: async function () { return {}; } }; }, [])).join('\n');
   assert.ok(/✗ nba: every scoreboard request failed \(.*HTTP 500/.test(bad), bad);
 });

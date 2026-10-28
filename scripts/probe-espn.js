@@ -16,6 +16,8 @@ const Teams = require('../public/lib/teams.js');
 
 const PATHS = { nba: 'basketball/nba', mlb: 'baseball/mlb' };
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports/';
+const BAT_STATS = ['hits', 'runs', 'rbis', 'home_runs', 'walks', 'batter_strikeouts', 'total_bases', 'singles', 'doubles', 'triples', 'stolen_bases', 'hits_runs_rbis'];
+const PIT_STATS = ['pitcher_strikeouts', 'pitching_outs', 'earned_runs', 'hits_allowed', 'walks_allowed', 'pitches_thrown'];
 const SAMPLE_STATS = {
   nba: ['points', 'rebounds', 'assists', 'three_pointers_made', 'steals', 'blocks', 'turnovers', 'pts_reb_ast', 'double_double', 'fantasy_points'],
   mlb: ['hits', 'runs', 'rbis', 'home_runs', 'walks', 'batter_strikeouts', 'total_bases', 'singles', 'doubles', 'stolen_bases', 'hits_runs_rbis', 'pitcher_strikeouts', 'pitching_outs', 'earned_runs', 'hits_allowed', 'walks_allowed', 'pitches_thrown'],
@@ -62,13 +64,27 @@ async function probe(league, eventId, f, out) {
   log('  players found: ' + g.players.length + (g.players.length ? '' : '   ⚠ none: props can\'t track'));
   if (league === 'nba') log('  scoring plays kept for "first basket": ' + g.scoringPlays.length + (g.scoringPlays[0] ? ' (first: ' + g.scoringPlays[0].text + ')' : ''));
   if (league === 'mlb') log('  play-by-play available for singles/doubles/total bases/steals: ' + (g.hasPlays ? 'yes' : 'NO (those stats will ask for manual entry)'));
-  const star = g.players.slice().sort(function (a, b) { return JSON.stringify(b.stats).length - JSON.stringify(a.stats).length; })[0];
-  if (star) {
-    log('  sample player: ' + star.name + ' (' + star.team + ')  ' + Stats.statLine(star));
-    SAMPLE_STATS[league].forEach(function (k) {
-      const r = Stats.statValue(g, star.name, k, {});
-      log('    ' + k.padEnd(22) + (r.status === 'ok' ? String(r.value) : '— ' + r.status + (r.status === 'unsupported' ? ' (manual entry)' : '')));
-    });
+  const show = function (label, p, stats) {
+    if (!p) return;
+    log('  ' + label + ': ' + p.name + ' (' + p.team + ')  ' + Stats.statLine(p));
+    log('    ' + stats.map(function (k) { const r = Stats.statValue(g, p.name, k, {}); return k + '=' + (r.status === 'ok' ? r.value : r.status === 'unsupported' ? 'MANUAL' : r.status); }).join('  '));
+  };
+  if (league === 'nba') {
+    show('sample player', g.players.slice().sort(function (a, b) { return ((b.stats.box || {}).pts || 0) - ((a.stats.box || {}).pts || 0); })[0], SAMPLE_STATS.nba);
+  } else {
+    const bat = function (p) { return p.stats.batting || {}; }, pit = function (p) { return p.stats.pitching || {}; };
+    show('best hitter', g.players.filter(bat).sort(function (a, b) { return (bat(b).h || 0) * 4 + (bat(b).hr || 0) * 3 + (bat(b).rbi || 0) - ((bat(a).h || 0) * 4 + (bat(a).hr || 0) * 3 + (bat(a).rbi || 0)); })[0], BAT_STATS);
+    show('best pitcher', g.players.filter(function (p) { return p.stats.pitching; }).sort(function (a, b) { return (pit(b).outs || 0) - (pit(a).outs || 0); })[0], PIT_STATS);
+    // play types ESPN uses, and whether the play-by-play explains every hit
+    const types = new Map();
+    (sum.plays || []).forEach(function (pl) { const t = pl.type ? (pl.type.text || pl.type.type || '?') : '(no type)'; const e = types.get(t) || { n: 0, ex: '' }; e.n++; if (!e.ex || (pl.text && e.ex.length > pl.text.length && pl.text.length > 12)) e.ex = pl.text || ''; types.set(t, e); });
+    log('  play types seen:');
+    Array.from(types.entries()).sort(function (a, b) { return b[1].n - a[1].n; }).slice(0, 40).forEach(function (kv) { log('    ' + String(kv[1].n).padStart(3) + ' × ' + kv[0] + '   e.g. "' + String(kv[1].ex).slice(0, 80) + '"'); });
+    const hitters = g.players.filter(function (p) { return bat(p).h > 0; }), off = [];
+    hitters.forEach(function (p) { const e = p.ev || { s: 0, d: 0, t: 0 }; if (e.s + e.d + e.t !== bat(p).h - (bat(p).hr || 0)) off.push(p.name + ': ' + bat(p).h + ' H / ' + (bat(p).hr || 0) + ' HR but plays show ' + e.s + ' 1B ' + e.d + ' 2B ' + e.t + ' 3B'); });
+    log('  hit-type check: ' + (hitters.length - off.length) + ' of ' + hitters.length + ' hitters\' hits are fully explained by the play-by-play' + (off.length ? '\n    ⚠ ' + off.join('\n    ⚠ ') : '  ✓'));
+    const sb = g.players.reduce(function (a, p) { return a + ((p.ev && p.ev.sb) || 0); }, 0);
+    log('  stolen bases counted from plays: ' + sb);
   }
 }
 
