@@ -187,37 +187,50 @@
   }
 
   /* Singles / doubles / triples / steals aren't columns in ESPN's MLB box score, so they're counted from the play-by-play.
-     g.hasPlays stays false when the feed has none, and those stats then fall back to manual entry. */
+     ESPN lists each of them twice: a pitch-level play (type "Single", text "Pitch 3 : Ball In Play", with the batter attached) and a
+     "Play Result" sentence ("Yelich singled to left."). Both are read separately and, per player, the one that adds up to the box
+     score's hit count wins, so nothing is ever counted twice. g.hasPlays stays false when the feed has no plays at all, and those
+     stats then fall back to manual entry. */
   function attachBaseEvents(g, j) {
     const plays = Array.isArray(j.plays) ? j.plays : [];
     g.hasPlays = plays.length > 0;
     if (!g.hasPlays) return;
-    const byId = {};
-    g.players.forEach(function (p) { if (p.id) byId[p.id] = p; p.ev = { s: 0, d: 0, t: 0, sb: 0 }; });
-    const seen = {};
+    const byId = {}, A = {}, B = {}, seen = {}, NAME = /^(.+?)\s+(?:singled|doubled|tripled|stole|hit\b|ground)/i;
+    let typedSteals = 0;
+    g.players.forEach(function (p) { if (p.id) byId[p.id] = p; });
+    const keyOf = function (p) { return p.team + '|' + (p.id || p.name); };
+    const add = function (bag, p, kind) { if (!p) return; const o = (bag[keyOf(p)] = bag[keyOf(p)] || { s: 0, d: 0, t: 0, sb: 0 }); o[kind]++; };
     plays.forEach(function (pl) {
       if (!pl) return;
       if (pl.id != null) { if (seen[pl.id]) return; seen[pl.id] = true; }
-      const text = String(pl.text || pl.shortText || ''), type = String((pl.type && (pl.type.text || pl.type.type)) || '').toLowerCase();
+      const text = String(pl.text || pl.shortText || '');
+      const type = String((pl.type && (pl.type.text || pl.type.type)) || '').toLowerCase().replace(/\s+/g, ' ').trim();
+      const typed = { single: 's', double: 'd', triple: 't', 'stolen base': 'sb' }[type];
+      if (typed) {
+        const want = typed === 'sb' ? /run/i : /bat/i;
+        const part = (pl.participants || []).find(function (x) { return x && want.test(String(x.type || x.role || '')); });
+        const pid = part && ((part.athlete && part.athlete.id) || part.id);
+        let p = pid != null ? byId[String(pid)] : null;
+        if (!p) { const m = text.match(NAME); if (m) p = findPlayer(g.players, m[1].trim()); }
+        if (typed === 'sb') typedSteals++;
+        add(A, p, typed);
+        return;
+      }
       let kind = null;
-      if (type === 'single' || (!type && /\bsingled\b/i.test(text))) kind = 's';
-      else if (type === 'double' || (!type && /\bdoubled\b/i.test(text) && !/doubled off/i.test(text))) kind = 'd';
-      else if (type === 'triple' || (!type && /\btripled\b/i.test(text))) kind = 't';
-      else if (!type || type === 'play result' || type === 'play') {
-        if (/\bsingled\b/i.test(text)) kind = 's'; else if (/\bdoubled\b/i.test(text) && !/doubled off/i.test(text)) kind = 'd'; else if (/\btripled\b/i.test(text)) kind = 't';
-      }
-      if (!kind && /\bstole\b/i.test(text) && !/caught stealing/i.test(text)) kind = 'sb';
+      if (/\bsingled\b/i.test(text)) kind = 's';
+      else if (/\bdoubled\b/i.test(text) && !/doubled off/i.test(text)) kind = 'd';
+      else if (/\btripled\b/i.test(text)) kind = 't';
+      else if (/\bstole\b/i.test(text) && !/caught stealing/i.test(text)) kind = 'sb';
       if (!kind) return;
-      let p = null;
-      const want = kind === 'sb' ? /run/i : /bat/i;
-      const part = (pl.participants || []).find(function (x) { return x && want.test(String(x.type || x.role || '')); });
-      const pid = part && ((part.athlete && part.athlete.id) || part.id);
-      if (pid != null && byId[String(pid)]) p = byId[String(pid)];
-      if (!p) {
-        const m = text.match(/^(.+?)\s+(?:singled|doubled|tripled|stole|hit\b|ground)/i);
-        if (m) p = findPlayer(g.players, m[1].trim());
-      }
-      if (p && p.ev) p.ev[kind]++;
+      const m = text.match(NAME);
+      add(B, m ? findPlayer(g.players, m[1].trim()) : null, kind);
+    });
+    const zero = { s: 0, d: 0, t: 0, sb: 0 };
+    g.players.forEach(function (p) {
+      const a = A[keyOf(p)] || zero, b = B[keyOf(p)] || zero, bat = (p.stats && p.stats.batting) || {}, need = n(bat.h) - n(bat.hr);
+      const fits = function (x) { return x.s + x.d + x.t === need; };
+      const pick = fits(a) ? a : fits(b) ? b : a;
+      p.ev = { s: pick.s, d: pick.d, t: pick.t, sb: typedSteals ? a.sb : b.sb };
     });
   }
 

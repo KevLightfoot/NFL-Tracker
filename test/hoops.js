@@ -77,14 +77,24 @@ function mlbSummary(o, withPlays) {
       ] },
     ] },
   };
+  // ESPN lists every hit twice: a pitch-level play (typed, with the batter attached) and a "Play Result" sentence that uses last names
   if (withPlays !== false) s.plays = [
-    { id: 'a', type: { text: 'Home Run' }, text: 'Mookie Betts homered to left (400 feet)' },
-    { id: 'b', type: { text: 'Single' }, text: 'Mookie Betts singled to center', participants: [{ athlete: { id: 'b1' }, type: 'batter' }] },
-    { id: 'c', type: { text: 'Double' }, text: 'Freddie Freeman doubled to right' },
-    { id: 'd', type: { text: 'Home Run' }, text: 'Aaron Judge homered to center, Anthony Volpe scored' },
-    { id: 'e', type: { text: 'Stolen Base' }, text: 'Mookie Betts stole second' },
-    { id: 'e', type: { text: 'Stolen Base' }, text: 'Mookie Betts stole second' },       // duplicate id is ignored
-    { id: 'f', type: { text: 'Strikeout' }, text: 'Teoscar Hernandez struck out swinging' },
+    { id: 'n1', type: { text: 'Ball' }, text: 'Pitch 1 : Ball 1' },
+    { id: 'a1', type: { text: 'Home Run' }, text: 'Pitch 3 : Ball In Play', participants: [{ athlete: { id: 'b1' }, type: 'batter' }, { athlete: { id: 'p2' }, type: 'pitcher' }] },
+    { id: 'a2', type: { text: 'Play Result' }, text: 'Betts homered to left (400 feet).' },
+    { id: 'b1', type: { text: 'Single' }, text: 'Pitch 2 : Ball In Play', participants: [{ athlete: { id: 'b1' }, type: 'batter' }, { athlete: { id: 'p2' }, type: 'pitcher' }] },
+    { id: 'b2', type: { text: 'Play Result' }, text: 'Betts singled to center.' },
+    { id: 'c1', type: { text: 'Double' }, text: 'Pitch 4 : Ball In Play' },                               // no batter attached: the sentence below supplies it
+    { id: 'c2', type: { text: 'Play Result' }, text: 'Freeman doubled to right, Betts to third.' },
+    { id: 'd1', type: { text: 'Home Run' }, text: 'Pitch 1 : Ball In Play', participants: [{ athlete: { id: 'b4' }, type: 'batter' }] },
+    { id: 'd2', type: { text: 'Play Result' }, text: 'Judge homered to center, Volpe scored.' },
+    { id: 'e1', type: { text: 'Stolen Base' }, text: 'Betts stole second.' },
+    { id: 'e2', type: { text: 'Play Result' }, text: 'Betts stole second.' },
+    { id: 'e2', type: { text: 'Play Result' }, text: 'Betts stole second.' },                              // same id twice: ignored
+    { id: 'g1', type: { text: 'Caught Stealing' }, text: 'Freeman caught stealing second, catcher to second.' },
+    { id: 'g2', type: { text: 'Play Result' }, text: 'Freeman caught stealing second.' },
+    { id: 'h1', type: { text: 'Double' }, text: 'Pitch 2 : Ball In Play', participants: [{ athlete: { id: 'b4' }, type: 'batter' }] },   // an extra typed double for Judge that his box score doesn't have
+    { id: 'f', type: { text: 'Play Result' }, text: 'Hernandez struck out swinging.' },
   ];
   return s;
 }
