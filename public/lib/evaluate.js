@@ -350,6 +350,57 @@
     r.detail = 'Not auto-trackable — mark it yourself';
   }
 
+  /* ---------- automatic slip names: "JMU -3.5, UNT ML, Chuba 30+" ---------- */
+  const PERIOD_SHORT = { full: '', '1h': '1H ', '2h': '2H ', q1: 'Q1 ', q2: 'Q2 ', q3: 'Q3 ', q4: 'Q4 ', f3: 'F3 ', f5: 'F5 ', f7: 'F7 ', i1: '1st inn ' };
+  const YES_SHORT = { double_double: 'DD', triple_double: 'trip-dbl' };
+
+  /* "Chuba Hubbard" -> "Chuba"; initials and suffixes are skipped ("C.J. Stroud" -> "Stroud", "Michael Pittman Jr." -> "Michael") */
+  function shortPlayer(name) {
+    const parts = String(name || '').replace(/[,]/g, ' ').split(/\s+/).filter(function (x) { return x && !/^(jr|sr|ii|iii|iv|v)\.?$/i.test(x); });
+    if (!parts.length) return '';
+    if (parts.length === 1) return parts[0];
+    return /^([A-Za-z]\.?|([A-Za-z]\.){2,})$/.test(parts[0]) ? parts[parts.length - 1] : parts[0];
+  }
+
+  function autoName(legs, games) {
+    games = games || {};
+    let complete = true;
+    const teamOf = function (leg, g) {
+      let abbr = leg.teamResolved || Teams.matchTeam(leg.team, (g && g.league) || leg.league || undefined);
+      if (!abbr) { complete = false; return String(leg.team || '').trim(); }     // not matched yet: the name as written, and the name isn't final
+      return abbr;
+    };
+    const ou = function (leg) {
+      const line = Number(leg.line);
+      if (leg.side === 'under') return 'u' + fmt(line);
+      if (line % 1 !== 0 && /\d\s*\+/.test(leg.raw_text || '') && line > 0) return Math.ceil(line) + '+';   // "30+" ladder lines
+      return 'o' + fmt(line);
+    };
+    const one = function (leg) {
+      const g = games[leg.gameId] || null, per = PERIOD_SHORT[leg.period || 'full'] || '', who = shortPlayer(leg.player);
+      switch (leg.market) {
+        case 'moneyline': return per + teamOf(leg, g) + ' ML';
+        case 'spread': return per + teamOf(leg, g) + ' ' + signed(Number(leg.line) || 0);
+        case 'total': {
+          const lg = (g && g.league) || leg.league || undefined;
+          const a = g ? g.away.abbr : Teams.matchTeam(leg.away_team, lg), h = g ? g.home.abbr : Teams.matchTeam(leg.home_team, lg);
+          return per + (a && h ? a + '/' + h + ' ' : '') + ou(leg);
+        }
+        case 'team_total': return per + teamOf(leg, g) + ' TT ' + ou(leg);
+        case 'anytime_td': return who + ' TD';
+        case 'first_td': return who + ' 1st TD';
+        case 'last_td': return who + ' last TD';
+        case 'first_basket': return who + ' 1st bkt';
+        case 'player_prop':
+          if (leg.side === 'yes' || leg.line == null) return who + ' ' + (YES_SHORT[leg.stat] || (STAT_LABEL[leg.stat] || 'prop'));
+          return who + ' ' + ou(leg);
+        default: return String(leg.raw_text || leg.notes || 'Bet').slice(0, 28);
+      }
+    };
+    const MAX = 6, list = (legs || []).slice(0, MAX).map(one);
+    return { text: list.join(', ') + ((legs || []).length > MAX ? ' +' + (legs.length - MAX) + ' more' : ''), complete: complete };
+  }
+
   /* parlay-level summary */
   function summarize(results) {
     const c = { hit: 0, miss: 0, push: 0, void: 0, live: 0, pending: 0, unresolved: 0 };
@@ -364,5 +415,5 @@
     return { counts: c, total: total, hits: c.hit, status: status, alive: c.miss === 0 };
   }
 
-  return { evaluateLeg: evaluateLeg, describeLeg: describeLeg, summarize: summarize, scopedScore: scopedScore, STAT_LABEL: STAT_LABEL, STAT_GROUPS: STAT_GROUPS, fmt: fmt, gameStatusText: gameStatusText };
+  return { evaluateLeg: evaluateLeg, describeLeg: describeLeg, summarize: summarize, autoName: autoName, shortPlayer: shortPlayer, scopedScore: scopedScore, STAT_LABEL: STAT_LABEL, STAT_GROUPS: STAT_GROUPS, fmt: fmt, gameStatusText: gameStatusText };
 });

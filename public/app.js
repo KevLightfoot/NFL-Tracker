@@ -281,6 +281,18 @@
     return leg;
   }
 
+  /* A slip without a name of your own is named after its legs: "JMU -3.5, UNT ML, Chuba 30+". Re-derived as teams resolve and legs
+     are edited; once you type a name it is yours and never touched (clear the box to go back to the automatic one). */
+  function refreshNames() {
+    let changed = false;
+    S.parlays.forEach(function (p) {
+      if (p.demo || p.autoName === false || (p.name && p.autoName !== true)) return;
+      const r = E.autoName(p.legs, S.games);
+      if (r.text && r.text !== p.name && (r.complete || !p.name)) { p.name = r.text; p.autoName = true; changed = true; }
+    });
+    return changed;
+  }
+
   function buildParlay(bet, thumb) {
     const wager = num(bet.wager);
     let payout = num(bet.payout);
@@ -475,6 +487,7 @@
       }));
       S.fetchError = err; S.serverDown = false;
       S.lastUpdate = Date.now();
+      refreshNames();
       save();
     } catch (e) { S.fetchError = e.message; }
     S.busy = false; document.body.classList.remove('spinning');
@@ -676,7 +689,9 @@
     $('#dlgBet').addEventListener('close', function () {
       if ($('#dlgBet').returnValue !== 'save' || !editing) return;
       const p = editing.p;
-      p.name = $('#bName').value.trim(); p.wager = num($('#bWager').value); p.payout = num($('#bPayout').value);
+      const typed = $('#bName').value.trim();
+      if (typed !== (p.name || '')) { p.autoName = typed === ''; p.name = typed; if (!typed) refreshNames(); }
+      p.wager = num($('#bWager').value); p.payout = num($('#bPayout').value);
       p.odds = $('#bOdds').value.trim(); p.sportsbook = $('#bBook').value.trim();
       save(); render();
     });
