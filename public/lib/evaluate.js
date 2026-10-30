@@ -190,6 +190,28 @@
     }
   }
 
+  /* A leg with no line must never be graded against 0 (everything "clears" 0). */
+  function hasLine(leg) { return leg.line != null && leg.line !== '' && isFinite(Number(leg.line)) && (Number(leg.line) !== 0 || leg.market === 'spread'); }
+  function noLine(r) { r.kind = r.kind || 'bar'; r.state = 'unresolved'; r.detail = 'The line is missing on this leg — tap Edit bet to enter it'; return r; }
+
+  /* Ladder lines ("30+ Rushing Yards", "2+ TDs") mean AT LEAST N, i.e. over N-0.5. The model sometimes returns N itself (which would
+     need N+1) or nothing at all, so the printed text decides. Only the exact buggy value is rewritten, never a line someone typed. */
+  function ladderN(leg) {
+    if (!leg || leg.side === 'under' || ['player_prop', 'team_total', 'total'].indexOf(leg.market) < 0) return null;
+    const m = /(?:^|[^\d.+\-])(\d{1,4})\+(?!\d)/.exec(String(leg.raw_text || ''));
+    return m ? Number(m[1]) : null;
+  }
+  function applyLadder(leg, fillMissing) {
+    const n = ladderN(leg);
+    if (n == null || n < 1) return false;
+    const want = n - 0.5;
+    const cur = leg.line == null || leg.line === '' ? null : Number(leg.line);
+    if (cur === want) return false;
+    if (cur == null ? !fillMissing : cur !== n) return false;
+    leg.line = want; if (!leg.side) leg.side = 'over';
+    return true;
+  }
+
   function evaluateLeg(leg, game) {
     if (game) Teams.registerGame(game); // college teams register themselves from game data
     const r = blank(leg, game);
@@ -237,7 +259,8 @@
         r.state = 'live'; r.onTrack = diff > 0 ? true : diff < 0 ? false : null;
         r.detail = diff > 0 ? Teams.name(abbr, lg) + ' leading by ' + fmt(diff) : diff < 0 ? Teams.name(abbr, lg) + ' trailing by ' + fmt(-diff) : 'Tied';
       } else {
-        const line = Number(leg.line) || 0;
+        if (!hasLine(leg)) return noLine(r);
+        const line = Number(leg.line);
         const cover = diff + line;
         if (!sc.started) { r.state = 'pending'; r.detail = ''; return; }
         const coverTxt = cover > 0 ? 'Covering by ' + fmt(cover) : cover < 0 ? 'Needs ' + fmt(-cover) + ' more to cover' : 'Right on the number';
@@ -255,7 +278,8 @@
         if (!abbr || (abbr !== g.away.abbr && abbr !== g.home.abbr)) { r.detail = 'Team not found in this game — edit the leg'; return; }
         total = abbr === g.away.abbr ? sc.away : sc.home;
       }
-      const line = Number(leg.line) || 0;
+      if (!hasLine(leg)) return noLine(r);
+      const line = Number(leg.line);
       r.kind = 'total';
       r.current = total; r.target = line;
       r.valueText = fmt(total); r.targetText = fmt(line);
@@ -311,6 +335,7 @@
       const side = market === 'anytime_td' ? 'yes' : leg.side;
       let line = market === 'anytime_td' ? 0.5 : Number(leg.line);
       if (side === 'yes' && (leg.line == null || market === 'anytime_td')) line = 0.5;
+      else if (!hasLine(leg)) return noLine(r);
       if (!isFinite(line)) line = 0;
       const final = g ? g.state === 'post' : false;
       const started = g ? g.state !== 'pre' : true;
@@ -415,5 +440,5 @@
     return { counts: c, total: total, hits: c.hit, status: status, alive: c.miss === 0 };
   }
 
-  return { evaluateLeg: evaluateLeg, describeLeg: describeLeg, summarize: summarize, autoName: autoName, shortPlayer: shortPlayer, scopedScore: scopedScore, STAT_LABEL: STAT_LABEL, STAT_GROUPS: STAT_GROUPS, fmt: fmt, gameStatusText: gameStatusText };
+  return { evaluateLeg: evaluateLeg, applyLadder: applyLadder, hasLine: hasLine, describeLeg: describeLeg, summarize: summarize, autoName: autoName, shortPlayer: shortPlayer, scopedScore: scopedScore, STAT_LABEL: STAT_LABEL, STAT_GROUPS: STAT_GROUPS, fmt: fmt, gameStatusText: gameStatusText };
 });

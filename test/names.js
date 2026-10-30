@@ -62,7 +62,7 @@ test('long slips are capped at six legs with a count of the rest; an empty slip 
 test('the app names slips on refresh, keeps names you typed, and never overwrites a good name with a half-known one', function () {
   // run the real app.js against a tiny DOM stand-in is overkill: check the rules by reading its source
   const src = require('fs').readFileSync(require('path').join(__dirname, '../public/app.js'), 'utf8');
-  assert.ok(/function refreshNames\(\)/.test(src) && /refreshNames\(\);\s*\n\s*save\(\);/.test(src), 'names refresh before every save of a refresh');
+  assert.ok(/function refreshNames\(\)/.test(src) && /refreshNames\(\);\s*\n(\s*auditLegs\(\);\s*\n)?\s*save\(\);/.test(src), 'names refresh before every save of a refresh');
   assert.ok(/p\.autoName === false \|\| \(p\.name && p\.autoName !== true\)/.test(src), 'a name you typed is skipped');
   assert.ok(/r\.complete \|\| !p\.name/.test(src), 'an existing name is only replaced by a complete one');
   assert.ok(/p\.autoName = typed === ''/.test(src), 'typing a name takes control; clearing it hands it back');

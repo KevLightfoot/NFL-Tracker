@@ -37,14 +37,19 @@
   }
 
   /* items: array of objects with a .name. Returns best match or null. */
+  // The team is only a preference: slips often name the wrong side ("CAR Panthers @ GB Packers" printed on every leg), so when the
+  // player is not on that team, look at everyone in the game rather than reporting "not in the box score".
   function findPlayer(items, query, teamAbbr) {
+    if (teamAbbr && items && items.length) {
+      const onTeam = items.filter(function (p) { return p.team === teamAbbr; });
+      if (onTeam.length && onTeam.length < items.length) { const hit = findPlayerIn(onTeam, query); if (hit) return hit; }
+    }
+    return findPlayerIn(items, query);
+  }
+  function findPlayerIn(items, query) {
     const q = normName(query);
     if (!q || !items || !items.length) return null;
-    let pool = items;
-    if (teamAbbr) {
-      const t = pool.filter(function (p) { return p.team === teamAbbr; });
-      if (t.length) pool = t;
-    }
+    const pool = items;
     const withNorm = pool.map(function (p) { return { p: p, nn: normName(p.name) }; });
     let hit = withNorm.filter(function (x) { return x.nn === q; });
     if (hit.length) return hit[0].p;

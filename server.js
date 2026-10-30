@@ -163,6 +163,16 @@ async function getRoster(teamId, league) {
   });
 }
 
+/* ---------------- structured logs (Render → Logs; one JSON object per line, no screenshots, no keys) ---------------- */
+function log(ev, data) {
+  try { console.log(JSON.stringify(Object.assign({ t: new Date().toISOString(), ev: ev }, data || {}))); } catch (e) { /* never let logging break a request */ }
+}
+const legBrief = function (l) {
+  return { player: l.player || undefined, team: l.team || undefined, market: l.market, stat: l.stat || undefined, side: l.side || undefined,
+    line: l.line == null ? null : l.line, league: l.league || undefined, away: l.away_team || undefined, home: l.home_team || undefined,
+    date: l.game_date || undefined, raw: l.raw_text ? String(l.raw_text).slice(0, 80) : undefined };
+};
+
 /* ---------------- leg -> game resolution ---------------- */
 function pickGame(cands, leg) {
   if (!cands.length) return null;
@@ -194,6 +204,41 @@ async function resolveLeg(leg, games) {
   let res = await resolveIn(leg, games, hint);
   if (!res.gameId && hint) res = await resolveIn(leg, games, null, true);   // the league hint can be wrong — retry across every league, but only on exact names
   return res;
+}
+
+/* The team a player is actually on in game g (box score once started, rosters before), or null. */
+async function playerTeamIn(g, name) {
+  if (g.state === 'pre') {
+    for (const side of [g.away, g.home]) {
+      const roster = await getRoster(side.id, g.league);
+      if (Stats.findPlayer(roster, name)) return side.abbr;
+    }
+    return null;
+  }
+  const full = await getGame(g.id, g.league);
+  const p = Stats.findPlayer(full.players, name);
+  return p ? p.team : null;
+}
+
+/* All legs of one slip together. Legs that name a team or matchup are resolved on their own; a prop that shows no matchup first looks in
+   the games the rest of the slip is in (a 7-leg Panthers–Packers slip is about one game), and only then searches the week's games. */
+async function resolveSlip(legs, games) {
+  const out = {}, deferred = [];
+  for (const leg of legs) {
+    if (!leg.team && !leg.away_team && !leg.home_team && leg.player) deferred.push(leg);
+    else out[leg.id] = await resolveLeg(leg, games);
+  }
+  const sib = []; const seen = new Set();
+  Object.keys(out).forEach(function (k) { const id = out[k].gameId; if (id && !seen.has(id)) { seen.add(id); const g = games.find(function (x) { return x.id === id; }); if (g) sib.push(g); } });
+  for (const leg of deferred) {
+    let hit = null;
+    for (const g of sib) {
+      const team = await playerTeamIn(g, leg.player).catch(function () { return null; });
+      if (team) { hit = { id: leg.id, gameId: g.id, team: team, league: g.league, via: 'slip' }; break; }
+    }
+    out[leg.id] = hit || await resolveLeg(leg, games);
+  }
+  return legs.map(function (l) { return out[l.id]; });
 }
 
 async function resolveIn(leg, games, hint, strict) {
@@ -232,6 +277,9 @@ async function resolveIn(leg, games, hint, strict) {
   }
   if (game && !team && leg.player && game.state !== 'pre') {
     try { const full = await getGame(game.id, game.league); const p = Stats.findPlayer(full.players, leg.player); if (p) team = p.team; } catch (e) { /* ignore */ }
+  }
+  if (game && leg.player) {   // the roster knows which side he is on better than the slip text does
+    try { const actual = await playerTeamIn(game, leg.player); if (actual) team = actual; } catch (e) { /* keep the slip's team */ }
   }
   return { id: leg.id, gameId: game ? game.id : null, team: team, league: game ? game.league : null };
 }
@@ -421,21 +469,44 @@ async function handleApi(req, res, url) {
     const r = await notifier.sendTest(body.endpoint);
     return send(res, r.ok ? 200 : (r.status === 404 ? 404 : 502), r.ok ? { ok: true } : { error: r.text || 'Could not send.' });
   }
+  if (p === '/api/log' && req.method === 'POST') {
+    if (!rateLimit(req, res, 'clientlog', 120, 60 * 60 * 1000)) return;
+    let b = {}; try { b = JSON.parse(await readBody(req, 12e3) || '{}'); } catch (e) { /* ignore */ }
+    const ev = String(b.ev || '').replace(/[^a-z0-9_]/gi, '').slice(0, 40) || 'client';
+    log('client_' + ev, { uid: String(b.uid || '').slice(0, 12) || undefined, ua: String(req.headers['user-agent'] || '').slice(0, 80), data: b.data });
+    return send(res, 200, { ok: true });
+  }
   if (p === '/api/games' && req.method === 'GET') return send(res, 200, { games: await getGames() });
   if (p.startsWith('/api/game/') && req.method === 'GET') return send(res, 200, { game: await getGame(p.slice('/api/game/'.length), url.searchParams.get('league')) });
   if (p === '/api/resolve' && req.method === 'POST') {
     const body = JSON.parse(await readBody(req, 2e6) || '{}');
     const games = await getGames();
-    const out = [];
-    for (const leg of (body.legs || []).slice(0, 40)) out.push(await resolveLeg(leg, games));
+    const legs = (body.legs || []).slice(0, 40), groups = new Map();
+    legs.forEach(function (l) { const k = String(l.slip || ''); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(l); });
+    const byId = {};
+    for (const g of groups.values()) {
+      let rs; try { rs = await resolveSlip(g, games); } catch (e) { log('resolve_error', { error: String(e.message || e).slice(0, 200) }); rs = []; for (const l of g) rs.push(await resolveLeg(l, games)); }
+      rs.forEach(function (r) { byId[r.id] = r; });
+    }
+    const out = legs.map(function (l) { return byId[l.id]; });
+    out.forEach(function (r, i) { log(r.gameId ? 'resolve' : 'resolve_miss', { leg: legBrief(legs[i]), gameId: r.gameId, team: r.team, league: r.league, via: r.via }); });
     return send(res, 200, { results: out });
   }
   if (p === '/api/parse' && req.method === 'POST') {
     const body = JSON.parse(await readBody(req, 30e6) || '{}');
     const images = (body.images || []).slice(0, 12).filter(function (im) { return im && /^image\/(jpeg|png|webp)$/.test(im.mediaType) && im.data; });
     if (!images.length) return send(res, 400, { error: 'No usable image. Use a PNG, JPG or WebP screenshot.' });
-    const bet = await parseSlip(images, req.headers['x-api-key']);
+    const t0 = Date.now();
+    let bet;
+    try { bet = await parseSlip(images, req.headers['x-api-key']); }
+    catch (e) { log('parse_error', { ms: Date.now() - t0, images: images.length, error: String(e.message || e).slice(0, 300) }); throw e; }
     const extra = Array.isArray(bet.additional_bets) ? bet.additional_bets : [];
+    const allBets = [bet].concat(extra);
+    allBets.forEach(function (b) {
+      const legs = (b && b.legs) || [];
+      const noLine = legs.filter(function (l) { return ['spread', 'total', 'team_total', 'player_prop'].indexOf(l.market) >= 0 && l.side !== 'yes' && (l.line == null || l.line === 0) && l.market !== 'spread'; }).length;
+      log(noLine ? 'parse_missing_lines' : 'parse', { ms: Date.now() - t0, images: images.length, legs: legs.length, noLine: noLine, wager: b && b.wager, payout: b && b.payout, odds: b && b.total_odds, warnings: (b && b.warnings || []).slice(0, 4), legsDetail: legs.map(legBrief) });
+    });
     delete bet.additional_bets;
     const bets = [bet].concat(extra.filter(function (b) { return b && Array.isArray(b.legs) && b.legs.length; }));
     return send(res, 200, { bet: bet, bets: bets });
@@ -484,4 +555,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { notifier: notifier, server: server, resolveLeg: resolveLeg, pickGame: pickGame, parseSlip: parseSlip, TOOL: TOOL };
+module.exports = { notifier: notifier, server: server, resolveLeg: resolveLeg, resolveSlip: resolveSlip, pickGame: pickGame, parseSlip: parseSlip, TOOL: TOOL };

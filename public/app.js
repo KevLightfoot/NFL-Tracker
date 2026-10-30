@@ -266,6 +266,9 @@
     return leg;
   }
 
+  // The model likes to remark on odds, percentages, payouts and boosts; those are not things the user can act on.
+  function usefulWarning(w) { return !/odds|percent|%|payout|wager|stake|price|boost|trade|cash.?out|sportsbook|currency/i.test(String(w || '')); }
+
   /* ---------------- build parlays from parse output ---------------- */
   function normLeg(l) {
     const leg = {
@@ -278,6 +281,9 @@
     if ((leg.market === 'player_prop' || leg.market === 'total' || leg.market === 'team_total') && !leg.side) leg.side = 'over';
     fixTdLeg(leg);
     if (leg.market === 'anytime_td') leg.side = 'yes';
+    if (leg.line === 0 && leg.market !== 'spread') leg.line = null;   // a model "0" means "not shown", never a real line
+    E.applyLadder(leg, true);                                         // "30+" is over 29.5, whatever the model returned
+    if (leg.line != null && !isFinite(leg.line)) leg.line = null;
     return leg;
   }
 
@@ -378,7 +384,8 @@
     const title = (p.name ? esc(p.name) : (p.legs.length + '-Leg ' + (BET_LABEL[p.betType] || 'Parlay'))) +
       '<small>' + (p.name ? p.legs.length + '-Leg ' + esc(BET_LABEL[p.betType] || 'Parlay') + ' · ' : '') + esc(p.sportsbook || (p.demo ? 'Demo' : 'Bet slip')) + '</small>';
     const segs = results.map(function (r) { return '<i class="seg ' + (['hit', 'miss', 'live', 'push', 'void'].indexOf(r.state) >= 0 ? r.state : '') + '"></i>'; }).join('');
-    const warns = (p.warnings || []).length ? '<div class="hint" style="color:#fbbf24;margin-top:8px">⚠ ' + p.warnings.map(esc).join(' · ') + '</div>' : '';
+    const shownWarns = (p.warnings || []).filter(usefulWarning);
+    const warns = shownWarns.length ? '<div class="hint" style="color:#fbbf24;margin-top:8px">⚠ ' + shownWarns.map(esc).join(' · ') + '</div>' : '';
     const upd = p.demo ? 'Demo · simulated games' : (S.lastUpdate ? 'Updated ' + new Date(S.lastUpdate).toLocaleTimeString() : 'Waiting for data…');
     const collapsed = S.collapsed.has(p.id);
     return '<article class="parlay p-' + sum.status + (collapsed ? ' collapsed' : '') + '" data-p="' + p.id + '">' +
@@ -463,17 +470,48 @@
     b.className = cls; b.hidden = !html; b.innerHTML = html;
   }
 
+  /* ---------------- diagnostics: tell the server when something looks wrong (shows up in Render → Logs) ---------------- */
+  const reported = new Set();
+  let reportCount = 0;
+  function report(ev, data, key) {
+    try {
+      if (key) { if (reported.has(key)) return; reported.add(key); }
+      if (++reportCount > 40) return;
+      const u = C.cloud && C.cloud.user ? String(C.cloud.user.id || '').slice(0, 8) : '';
+      fetch(API_BASE + '/api/log', { method: 'POST', headers: { 'content-type': 'application/json' }, keepalive: true, body: JSON.stringify({ ev: ev, uid: u, data: data }) }).catch(function () {});
+    } catch (e) { /* diagnostics must never break the app */ }
+  }
+  window.addEventListener('error', function (e) { report('js_error', { msg: String(e.message || '').slice(0, 200), at: String(e.filename || '').split('/').pop() + ':' + e.lineno }); });
+  window.addEventListener('unhandledrejection', function (e) { report('js_rejection', { msg: String((e.reason && e.reason.message) || e.reason || '').slice(0, 200) }); });
+  // Legs whose game started but whose player isn't found, and legs no game could be found for, with everything needed to see why.
+  function auditLegs() {
+    S.parlays.forEach(function (p) {
+      if (p.demo) return;
+      p.legs.forEach(function (l) {
+        const brief = { slip: String(p.id).slice(0, 6), player: l.player, team: l.team, resolved: l.teamResolved, league: l.league, market: l.market, stat: l.stat, side: l.side, line: l.line, raw: String(l.raw_text || '').slice(0, 60), gameId: l.gameId };
+        if (!l.gameId && l.market !== 'other' && !l.noResolve) { report('unresolved_leg', brief, 'u' + l.id); return; }
+        const g = S.games[l.gameId];
+        if (!g) return;
+        if (l.player && g.state !== 'pre' && !l.manual) {
+          const r = E.evaluateLeg(l, g);
+          if (/^Not in the box score/.test(r.detail || '')) report('no_player_in_box', Object.assign({ game: g.away && g.home ? g.away.abbr + '@' + g.home.abbr : '', gl: g.league, players: (g.players || []).length, state: g.state }, brief), 'n' + l.id);
+        }
+        if (E.hasLine && ['spread', 'total', 'team_total', 'player_prop'].indexOf(l.market) >= 0 && l.side !== 'yes' && !E.hasLine(l)) report('missing_line', brief, 'm' + l.id);
+      });
+    });
+  }
+
   /* ---------------- refresh loop ---------------- */
   async function refreshAll() {
     if (S.busy) { S.again = true; return; }
     S.busy = true; document.body.classList.add('spinning');
     let err = null;
     try {
-      const need = [];
-      S.parlays.forEach(function (p) { p.legs.forEach(function (l) { if (!l.gameId && !l.noResolve && l.market !== 'other') need.push(l); }); });
+      const need = [], slipOf = {};
+      S.parlays.forEach(function (p) { p.legs.forEach(function (l) { E.applyLadder(l, false); if (!l.gameId && !l.noResolve && l.market !== 'other') { need.push(l); slipOf[l.id] = p.id; } }); });
       if (need.length) {
         try {
-          const j = await api('/api/resolve', { method: 'POST', body: JSON.stringify({ legs: need.map(function (l) { return { id: l.id, market: l.market, team: l.team, player: l.player, away_team: l.away_team, home_team: l.home_team, game_date: l.game_date, league: l.league || null }; }) }) });
+          const j = await api('/api/resolve', { method: 'POST', body: JSON.stringify({ legs: need.map(function (l) { return { id: l.id, slip: slipOf[l.id] || '', market: l.market, team: l.team, player: l.player, away_team: l.away_team, home_team: l.home_team, game_date: l.game_date, league: l.league || null }; }) }) });
           (j.results || []).forEach(function (r) {
             const l = need.find(function (x) { return x.id === r.id; });
             if (l) { if (r.gameId) l.gameId = r.gameId; if (r.team) l.teamResolved = r.team; if (r.league) l.league = r.league; }
@@ -488,6 +526,7 @@
       S.fetchError = err; S.serverDown = false;
       S.lastUpdate = Date.now();
       refreshNames();
+      auditLegs();
       save();
     } catch (e) { S.fetchError = e.message; }
     S.busy = false; document.body.classList.remove('spinning');
@@ -571,7 +610,7 @@
       S.pending = S.pending.filter(function (x) { return x.id !== entry.id; });
       bets.reverse().forEach(function (p) { S.parlays.unshift(p); });
       save(); renderPending(); render(); refreshAll();
-      const warn = [].concat.apply([], bets.map(function (p) { return p.warnings || []; }));
+      const warn = [].concat.apply([], bets.map(function (p) { return (p.warnings || []).filter(usefulWarning); }));
       if (bets.length > 1) toast(bets.length + ' bets found — each is tracked separately.');
       else if (warn.length) toast('Check this slip: ' + warn[0]);
     } catch (e) {
