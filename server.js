@@ -374,11 +374,40 @@ function systemPrompt() {
     '- Several images are consecutive, OVERLAPPING slices of one long screenshot (or different screenshots of the same slip). Never count a leg twice because it appears in the overlap; read the header (wager/payout) from whichever slice shows it.',
     '- If the screenshot shows several SEPARATE bets (e.g. an "Open Bets" list), put the first in the top-level fields and every other one in additional_bets. Legs of one parlay always stay together in one bet.',
     '- Totals: when a game total shows the matchup ("Raiders @ Browns" or "LV vs CLE"), fill away_team and home_team. Alternate spreads / alternate totals are ordinary spread / total legs with their own line.',
+    '- DraftKings Predictions / "Pick Combo" and trade slips print each leg with the THRESHOLD as a big heading ("30+", "2+", "1+"), then the matchup, then "Player Stat" (e.g. "Jalen Coker Receiving Yards"). The heading is the line: raw_text = "30+ Jalen Coker Receiving Yards", side over, line 29.5. A heading with the player and stat below it is ONE leg, never two. Never leave the line empty on a prop; if a number is printed anywhere in the leg, it is the line.',
     '- If a field is not on the slip use null. Put anything uncertain in warnings.',
   ].join('\n');
 }
 
+/* Legs that need a number (a prop, total or spread line) but came back without one. */
+function legsMissingLine(bet) {
+  const out = [];
+  const all = [bet].concat(Array.isArray(bet.additional_bets) ? bet.additional_bets : []);
+  all.forEach(function (b) {
+    ((b && b.legs) || []).forEach(function (l) {
+      const needs = ['total', 'team_total', 'player_prop'].indexOf(l.market) >= 0 && l.side !== 'yes' && (l.line == null || l.line === 0);
+      if (needs) out.push(l);
+    });
+  });
+  return out;
+}
+
 async function parseSlip(images, userKey) {
+  const first = await callModel(images, userKey, '');
+  const missing = legsMissingLine(first);
+  if (!missing.length) return first;
+  // One more look, pointing at exactly what was missed: the line is the single most important number on a leg.
+  log('parse_retry', { missing: missing.map(legBrief) });
+  const note = 'Your previous answer left the line empty on these legs: ' + missing.map(function (l) { return (l.player || l.team || l.raw_text || 'leg') + (l.stat ? ' ' + l.stat : ''); }).join('; ') +
+    '. Look at the screenshot again. Every leg prints its number: on DraftKings Predictions it is the big heading of the leg ("30+", "2+", "1+"), above the game and the "Player Stat" line, and "N+" means line N-0.5 with side over. Return the complete slip again with every line filled in.';
+  try {
+    const second = await callModel(images, userKey, note);
+    if (legsMissingLine(second).length < missing.length) { log('parse_retry_better', { before: missing.length, after: legsMissingLine(second).length }); return second; }
+  } catch (e) { log('parse_retry_failed', { error: String(e.message || e).slice(0, 200) }); }
+  return first;
+}
+
+async function callModel(images, userKey, extraNote) {
   const key = userKey || process.env.OPENAI_API_KEY;
   if (!key) { const e = new Error('No OpenAI API key. Add OPENAI_API_KEY to the server environment or paste one in Settings.'); e.status = 401; throw e; }
   const content = [];
@@ -386,7 +415,7 @@ async function parseSlip(images, userKey) {
     if (images.length > 1) content.push({ type: 'text', text: 'Image ' + (i + 1) + ' of ' + images.length + ' (overlapping slice of the same slip, top to bottom):' });
     content.push({ type: 'image_url', image_url: { url: 'data:' + im.mediaType + ';base64,' + im.data, detail: 'high' } });
   });
-  content.push({ type: 'text', text: 'Extract this bet slip with the submit_bet function.' });
+  content.push({ type: 'text', text: 'Extract this bet slip with the submit_bet function.' + (extraNote ? ' ' + extraNote : '') });
   const openAITool = { type: 'function', function: { name: TOOL.name, description: TOOL.description, parameters: TOOL.input_schema, strict: false } };
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',

@@ -92,6 +92,29 @@ test('resolving: a prop with no matchup is placed in the game its slip-mates are
   } finally { global.fetch = realFetch; }
 });
 
+test('parsing: legs that come back without a line get one more look, and the better answer wins', async function () {
+  const server = require('../server.js');
+  const realFetch = global.fetch; let calls = 0; const notes = [];
+  const reply = function (legs) { return { ok: true, status: 200, text: async function () { return JSON.stringify({ choices: [{ message: { tool_calls: [{ type: 'function', function: { name: 'submit_bet', arguments: JSON.stringify({ legs: legs }) } }] } }] }); } }; };
+  global.fetch = async function (url, opts) {
+    calls++; const body = JSON.parse(opts.body); const last = body.messages[1].content.slice(-1)[0].text; notes.push(last);
+    if (calls === 1) return reply([{ market: 'spread', team: 'Panthers', line: 17.5 }, { market: 'player_prop', player: 'Tucker Kraft', stat: 'receptions', side: 'over', line: null, raw_text: 'Tucker Kraft Receptions' }]);
+    return reply([{ market: 'spread', team: 'Panthers', line: 17.5 }, { market: 'player_prop', player: 'Tucker Kraft', stat: 'receptions', side: 'over', line: 2.5, raw_text: '3+ Tucker Kraft Receptions' }]);
+  };
+  try {
+    const bet = await server.parseSlip([{ mediaType: 'image/png', data: 'AAAA' }], 'sk-test');
+    assert.strictEqual(calls, 2); assert.ok(/left the line empty/.test(notes[1]) && /Tucker Kraft/.test(notes[1]));
+    assert.strictEqual(bet.legs[1].line, 2.5);
+    calls = 0; global.fetch = async function () { calls++; return reply([{ market: 'player_prop', player: 'A B', stat: 'receptions', side: 'over', line: 4.5 }]); };
+    await server.parseSlip([{ mediaType: 'image/png', data: 'AAAA' }], 'sk-test'); assert.strictEqual(calls, 1, 'a complete slip is read once');
+  } finally { global.fetch = realFetch; }
+});
+
+test('the app refuses to load a slip whose lines did not come through (three tries, then it saves with "line missing")', function () {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../public/app.js'), 'utf8');
+  assert.ok(/entry\.tries < 3/.test(src) && /Couldn’t read the lines/.test(src) && /!E\.hasLine\(l\)/.test(src));
+});
+
 (async function () {
   let pass = 0, fail = 0;
   for (const [n, f] of tests) { try { await f(); pass++; console.log('  ✓ ' + n); } catch (e) { fail++; console.log('  ✗ ' + n + '\n      ' + (e && e.stack || e)); } }

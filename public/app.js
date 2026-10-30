@@ -607,6 +607,18 @@
       const j = await api('/api/parse', { method: 'POST', body: JSON.stringify({ images: tiles }) });
       const bets = (j.bets && j.bets.length ? j.bets : [j.bet || {}]).map(function (b) { return buildParlay(b, entry.thumb); }).filter(function (p) { return p.legs.length; });
       if (!bets.length) throw new Error('No bets found in that image. Try a clearer or fuller screenshot.');
+      // Never load a slip whose lines didn't come through (it would show 0s and "clear" everything). The same screenshot usually reads
+      // fine on the next try; after three tries it is saved anyway and the empty legs say "line missing" until they're edited.
+      const bare = [];
+      bets.forEach(function (p) { p.legs.forEach(function (l) {
+        if (['spread', 'total', 'team_total', 'player_prop'].indexOf(l.market) >= 0 && l.side !== 'yes' && !E.hasLine(l)) bare.push(l.player || l.team || l.raw_text || 'a leg');
+      }); });
+      entry.tries = (entry.tries || 0) + 1;
+      if (bare.length && entry.tries < 3) {
+        report('parse_blocked', { try: entry.tries, legs: bets.reduce(function (n, p) { return n + p.legs.length; }, 0), bare: bare.slice(0, 6) });
+        throw new Error('Couldn’t read the lines for ' + bare.slice(0, 3).join(', ') + (bare.length > 3 ? ' and ' + (bare.length - 3) + ' more' : '') + '. Tap Retry — the same screenshot usually reads fine the second time.');
+      }
+      if (bare.length) report('parse_saved_without_lines', { bare: bare.slice(0, 6) });
       S.pending = S.pending.filter(function (x) { return x.id !== entry.id; });
       bets.reverse().forEach(function (p) { S.parlays.unshift(p); });
       save(); renderPending(); render(); refreshAll();
