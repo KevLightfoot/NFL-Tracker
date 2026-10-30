@@ -237,6 +237,9 @@ async function resolveSlip(legs, games) {
       if (team) { hit = { id: leg.id, gameId: g.id, team: team, league: g.league, via: 'slip' }; break; }
     }
     out[leg.id] = hit || await resolveLeg(leg, games);
+    // a leg placed by search tells the next ones where this slip is
+    const gid = out[leg.id] && out[leg.id].gameId;
+    if (gid && !seen.has(gid)) { const g = games.find(function (x) { return x.id === gid; }); if (g) { seen.add(gid); sib.push(g); } }
   }
   return legs.map(function (l) { return out[l.id]; });
 }
@@ -256,24 +259,29 @@ async function resolveIn(leg, games, hint, strict) {
   if (!game && leg.player) {
     // Find the player when the slip shows no matchup: box scores of live/final games, rosters of upcoming ones.
     // College has ~60 games a week, so only the current week is scanned, a few games at a time.
-    const order = pool.filter(function (g) { return g.thisWeek; }).slice(0, 160);
     const check = async function (g) {
-      if (g.state === 'pre') {
-        for (const side of [g.away, g.home]) {
-          const roster = await getRoster(side.id, g.league);
-          if (Stats.findPlayer(roster, leg.player)) return { game: g, team: side.abbr };
-        }
-        return null;
-      }
-      const full = await getGame(g.id, g.league);
-      const p = Stats.findPlayer(full.players, leg.player);
-      return p ? { game: g, team: p.team } : null;
+      const team = await playerTeamIn(g, leg.player);
+      return team ? { game: g, team: team } : null;
     };
-    for (let i = 0; i < order.length && !game; i += 8) {
-      const found = await Promise.all(order.slice(i, i + 8).map(function (g) { return check(g).catch(function () { return null; }); }));
-      const hitOne = found.find(Boolean);
-      if (hitOne) { game = hitOne.game; team = hitOne.team; }
-    }
+    const scan = async function (list) {
+      const order = list.filter(function (g) { return g.thisWeek; }).slice(0, 160);
+      for (let i = 0; i < order.length; i += 8) {
+        const found = await Promise.all(order.slice(i, i + 8).map(function (g) { return check(g).catch(function () { return null; }); }));
+        const hitOne = found.find(Boolean);
+        if (hitOne) return hitOne;
+      }
+      return null;
+    };
+    let hit = null;
+    if (hint === 'cfb') {
+      // Football names repeat across the pros and college (Jalen Coker, Josh Jacobs, Tetairoa McMillan all have a college namesake), and a
+      // slip that has a college leg makes the model call every leg "cfb". A pro game that is live or about to start beats a college namesake days away.
+      const soon = function (g) { return g.state !== 'pre' || (Date.parse(g.date) - Date.now()) < 30 * 36e5; };
+      const pro = await scan(games.filter(function (g) { return g.league === 'nfl'; }));
+      if (pro && soon(pro.game)) hit = pro;
+      else { const col = await scan(pool); hit = col || pro; }
+    } else hit = await scan(pool);
+    if (hit) { game = hit.game; team = hit.team; }
   }
   if (game && !team && leg.player && game.state !== 'pre') {
     try { const full = await getGame(game.id, game.league); const p = Stats.findPlayer(full.players, leg.player); if (p) team = p.team; } catch (e) { /* ignore */ }

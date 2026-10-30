@@ -92,6 +92,40 @@ test('resolving: a prop with no matchup is placed in the game its slip-mates are
   } finally { global.fetch = realFetch; }
 });
 
+test('resolving: pro players on a slip that also has college legs are not pulled into a college namesake game', async function () {
+  const server = require('../server.js');
+  const realFetch = global.fetch;
+  global.fetch = async function (url) {
+    const u = String(url), ok = function (j) { return { ok: true, status: 200, json: async function () { return j; } }; };
+    if (/summary\?event=402/.test(u)) {
+      const grp = function (abbr, id, names) { return { team: { id: id, abbreviation: abbr }, statistics: [{ name: 'receiving', labels: ['REC', 'YDS', 'TD'], athletes: names.map(function (n) { return { athlete: { displayName: n, id: n }, stats: ['1', '9', '0'] }; }) }] }; };
+      return ok({ header: { id: '402', competitions: [{ status: { type: { state: 'in', completed: false, detail: '7:30 - 3rd' }, period: 3, displayClock: '7:30' }, competitors: [
+        { homeAway: 'away', score: '10', team: { id: '29', abbreviation: 'CAR' } }, { homeAway: 'home', score: '27', team: { id: '9', abbreviation: 'GB' } }] }] },
+        boxscore: { players: [grp('CAR', '29', ['Jalen Coker', 'Tetairoa McMillan']), grp('GB', '9', ['Tucker Kraft', 'Josh Jacobs'])] } });
+    }
+    if (/teams\/(1|2|3|4)\/roster/.test(u)) return ok({ athletes: [{ items: [{ displayName: 'Jalen Coker' }, { displayName: 'Josh Jacobs' }, { displayName: 'Tetairoa McMillan' }] }] });
+    return { ok: false, status: 404, json: async function () { return {}; } };
+  };
+  try {
+    const soon = new Date(Date.now() + 40 * 36e5).toISOString();
+    const games = [
+      { id: '402', league: 'nfl', state: 'in', thisWeek: true, date: new Date().toISOString(), away: { id: '29', abbr: 'CAR' }, home: { id: '9', abbr: 'GB' } },
+      { id: '801', league: 'cfb', state: 'pre', thisWeek: true, date: soon, away: { id: '1', abbr: 'SMU' }, home: { id: '2', abbr: 'SYR' } },
+      { id: '802', league: 'cfb', state: 'pre', thisWeek: true, date: soon, away: { id: '3', abbr: 'WASH' }, home: { id: '4', abbr: 'NEB' } },
+      { id: '803', league: 'cfb', state: 'in', thisWeek: true, date: new Date().toISOString(), away: { id: '5', abbr: 'FAU' }, home: { id: '6', abbr: 'UNT' } },
+    ];
+    const Teams = require('../public/lib/teams.js');
+    [['FAU', 'Florida Atlantic Owls', 'Florida Atlantic', 'Owls'], ['UNT', 'North Texas Mean Green', 'North Texas', 'Mean Green']].forEach(function (t) { Teams.registerTeam('cfb', { abbr: t[0], name: t[1], short: t[2], nick: t[3], location: t[2] }); });
+    const prop = function (id, player, stat) { return { id: id, market: 'player_prop', player: player, stat: stat, line: 2.5, side: 'over', league: 'cfb' }; };
+    const out = await server.resolveSlip([
+      { id: 's', market: 'spread', team: 'North Texas', line: 2.5, league: 'cfb', away_team: 'FAU', home_team: 'UNT' },
+      prop('a', 'Josh Jacobs', 'receptions'), prop('b', 'Jalen Coker', 'receptions'), prop('c', 'Tetairoa McMillan', 'receptions'), prop('d', 'Tucker Kraft', 'receptions'),
+    ], games);
+    assert.strictEqual(out[0].gameId, '803');
+    ['a', 'b', 'c', 'd'].forEach(function (k, i) { assert.strictEqual(out[i + 1].gameId, '402', k + ' belongs in the live pro game, not a college namesake'); assert.strictEqual(out[i + 1].league, 'nfl'); });
+  } finally { global.fetch = realFetch; }
+});
+
 test('parsing: legs that come back without a line get one more look, and the better answer wins', async function () {
   const server = require('../server.js');
   const realFetch = global.fetch; let calls = 0; const notes = [];

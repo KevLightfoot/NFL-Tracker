@@ -501,6 +501,8 @@
     });
   }
 
+  const RESOLVER_V = 2;   // bump to make every prop with no matchup on its slip get placed again
+
   /* ---------------- refresh loop ---------------- */
   async function refreshAll() {
     if (S.busy) { S.again = true; return; }
@@ -508,13 +510,17 @@
     let err = null;
     try {
       const need = [], slipOf = {};
+      // Props placed by the old resolver may sit in a college game with the same player name; place those once more.
+      S.parlays.forEach(function (p) { if (p.demo) return; p.legs.forEach(function (l) {
+        if (l.player && l.gameId && !l.pinned && !l.team && !l.away_team && !l.home_team && (l.rv || 0) < RESOLVER_V) { l.gameId = null; l.teamResolved = null; }
+      }); });
       S.parlays.forEach(function (p) { p.legs.forEach(function (l) { E.applyLadder(l, false); if (!l.gameId && !l.noResolve && l.market !== 'other') { need.push(l); slipOf[l.id] = p.id; } }); });
       if (need.length) {
         try {
           const j = await api('/api/resolve', { method: 'POST', body: JSON.stringify({ legs: need.map(function (l) { return { id: l.id, slip: slipOf[l.id] || '', market: l.market, team: l.team, player: l.player, away_team: l.away_team, home_team: l.home_team, game_date: l.game_date, league: l.league || null }; }) }) });
           (j.results || []).forEach(function (r) {
             const l = need.find(function (x) { return x.id === r.id; });
-            if (l) { if (r.gameId) l.gameId = r.gameId; if (r.team) l.teamResolved = r.team; if (r.league) l.league = r.league; }
+            if (l) { if (r.gameId) { l.gameId = r.gameId; l.rv = RESOLVER_V; } if (r.team) l.teamResolved = r.team; if (r.league) l.league = r.league; }
           });
         } catch (e) { err = e.message; }
       }
