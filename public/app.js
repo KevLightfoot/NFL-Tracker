@@ -267,7 +267,7 @@
   }
 
   // The model likes to remark on odds, percentages, payouts and boosts; those are not things the user can act on.
-  function usefulWarning(w) { var t = String(w || ''); if (/assum|not explicitly|alternate|lack of|label|bet type|inferred|treated as|included as/i.test(t)) return false; return /missing|unreadable|cut off|couldn.?t read|not visible|blurry|no line/i.test(t); }
+  function usefulWarning() { return false; } /* model notes are never shown to users */
 
   /* ---------------- build parlays from parse output ---------------- */
   function normLeg(l) {
