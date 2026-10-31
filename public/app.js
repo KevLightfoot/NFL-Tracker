@@ -267,7 +267,7 @@
   }
 
   // The model likes to remark on odds, percentages, payouts and boosts; those are not things the user can act on.
-  function usefulWarning(w) { return !/odds|percent|%|payout|wager|stake|price|boost|trade|cash.?out|sportsbook|currency/i.test(String(w || '')); }
+  function usefulWarning(w) { var t = String(w || ''); if (/assum|not explicitly|alternate|lack of|label|bet type|inferred|treated as|included as/i.test(t)) return false; return /missing|unreadable|cut off|couldn.?t read|not visible|blurry|no line/i.test(t); }
 
   /* ---------------- build parlays from parse output ---------------- */
   function normLeg(l) {
@@ -408,7 +408,7 @@
       '<div class="segs">' + segs + '</div>' + warns + '</div>' +
       '<div class="pbody"' + (collapsed ? ' hidden' : '') + '>' +
       '<ul class="legs">' + legsSorted.map(function (l, i) { return legHTML(p, l, results[i]); }).join('') + '</ul>' +
-      '<div class="pf"><span>' + esc(upd) + '</span><span class="btns"><button class="btn small" data-act="edit-bet" data-p="' + p.id + '">Edit bet</button><button class="btn small danger" data-act="clear-slip" data-p="' + p.id + '">Clear slip</button></span></div></div></article>';
+      '<div class="pf"><span>' + esc(upd) + '</span><span class="btns"><button class="btn small' + (p.credit ? ' on' : '') + '" data-act="offshore" data-p="' + p.id + '" aria-pressed="' + !!p.credit + '">Offshore' + (p.credit ? ' ✓' : '') + '</button><button class="btn small" data-act="edit-bet" data-p="' + p.id + '">Edit bet</button><button class="btn small danger" data-act="clear-slip" data-p="' + p.id + '">Clear slip</button></span></div></div></article>';
   }
 
   /* ---------------- all-games dropdown (only when slips cover different games) ---------------- */
@@ -715,6 +715,14 @@
   function act(name, pid, lid) {
     const f = findLeg(pid, lid), p = f.p, l = f.l;
     if (!p) return;
+    if (name === 'offshore') {
+      // One tap: bet on credit. Risk stays the stake, "to win" is the profit, a win books +to-win and a loss books −stake, and the stake
+      // counts as wagered in the portfolio. Offshore slips print "to win", so if the payout read from the slip is no bigger than the
+      // stake it was the to-win amount: turn it into the total returned.
+      p.credit = !p.credit;
+      if (p.credit && p.wager != null && p.payout != null && p.payout <= p.wager) p.payout = r2(p.wager + p.payout);
+      applyOdds(p); save(); render(); toast(p.credit ? 'Marked offshore (credit).' : 'Back to a regular bet.'); return;
+    }
     if (name === 'edit-bet') return openBetDialog(p);
     if (name === 'clear-slip') {
       const finish = function () {
