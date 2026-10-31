@@ -190,6 +190,16 @@
     }
   }
 
+  /* American odds implied by what was staked and what comes back in total (stake included). Works for any account, book or offshore,
+     boosts included, because it only looks at the money: $24.75 → $61.05 is +147, risk $25 to win $25 is +100. */
+  function oddsFromMoney(wager, payout) {
+    const w = Number(wager), p = Number(payout);
+    if (!isFinite(w) || !isFinite(p) || w <= 0 || p <= w) return null;
+    const dec = p / w;
+    if (dec >= 2) return '+' + Math.round((dec - 1) * 100);
+    return '-' + Math.round(100 / (dec - 1));
+  }
+
   /* A leg with no line must never be graded against 0 (everything "clears" 0). */
   function hasLine(leg) { return leg.line != null && leg.line !== '' && isFinite(Number(leg.line)) && (Number(leg.line) !== 0 || leg.market === 'spread'); }
   function noLine(r) { r.kind = r.kind || 'bar'; r.state = 'unresolved'; r.detail = 'The line is missing on this leg — tap Edit bet to enter it'; return r; }
@@ -440,5 +450,5 @@
     return { counts: c, total: total, hits: c.hit, status: status, alive: c.miss === 0 };
   }
 
-  return { evaluateLeg: evaluateLeg, applyLadder: applyLadder, hasLine: hasLine, describeLeg: describeLeg, summarize: summarize, autoName: autoName, shortPlayer: shortPlayer, scopedScore: scopedScore, STAT_LABEL: STAT_LABEL, STAT_GROUPS: STAT_GROUPS, fmt: fmt, gameStatusText: gameStatusText };
+  return { evaluateLeg: evaluateLeg, oddsFromMoney: oddsFromMoney, applyLadder: applyLadder, hasLine: hasLine, describeLeg: describeLeg, summarize: summarize, autoName: autoName, shortPlayer: shortPlayer, scopedScore: scopedScore, STAT_LABEL: STAT_LABEL, STAT_GROUPS: STAT_GROUPS, fmt: fmt, gameStatusText: gameStatusText };
 });

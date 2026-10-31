@@ -25,6 +25,12 @@
     return isFinite(x) ? x : null;
   };
 
+  /* Offshore / credit slips are written "risk $25 to win $25". Everything is stored the same way as any other slip
+     (wager = the stake, payout = total returned including the stake), so a win is payout − wager = +$25 and a loss is −$25;
+     "to win" is only what the form shows and asks for on those slips. */
+  function toWinOf(wager, payout) { return wager != null && payout != null ? round2(payout - wager) : null; }
+  function payoutFromToWin(wager, toWin) { return wager != null && toWin != null ? round2(wager + toWin) : null; }
+
   /* money result of one entry: won = payout - wager, lost = -wager, placed = nothing settled yet */
   function profit(e) {
     if (e.status === 'won') return e.payout != null && e.wager != null ? round2(e.payout - e.wager) : 0;
@@ -33,15 +39,16 @@
   }
 
   function summarize(list) {
-    const s = { count: list.length, placed: 0, won: 0, lost: 0, atRisk: 0, wagered: 0, moneyWon: 0, moneyLost: 0, net: 0, settledWager: 0, winRate: null, roi: null };
+    const s = { count: list.length, placed: 0, won: 0, lost: 0, atRisk: 0, wagered: 0, creditWagered: 0, cashWagered: 0, moneyWon: 0, moneyLost: 0, net: 0, settledWager: 0, winRate: null, roi: null };
     list.forEach(function (e) {
       const w = e.wager || 0;
-      s.wagered += w;
+      s.wagered += w;                                    // everything staked counts, cash or credit
+      if (e.credit) s.creditWagered += w; else s.cashWagered += w;
       if (e.status === 'won') { s.won++; s.moneyWon += profit(e); s.settledWager += w; }
       else if (e.status === 'lost') { s.lost++; s.moneyLost += w; s.settledWager += w; }
       else { s.placed++; s.atRisk += w; }
     });
-    ['atRisk', 'wagered', 'moneyWon', 'moneyLost', 'settledWager'].forEach(function (k) { s[k] = round2(s[k]); });
+    ['atRisk', 'wagered', 'creditWagered', 'cashWagered', 'moneyWon', 'moneyLost', 'settledWager'].forEach(function (k) { s[k] = round2(s[k]); });
     s.net = round2(s.moneyWon - s.moneyLost);
     if (s.won + s.lost) s.winRate = s.won / (s.won + s.lost);
     if (s.settledWager > 0) s.roi = s.net / s.settledWager;
@@ -100,13 +107,13 @@
       date: o.date || today(),
       status: ['placed', 'won', 'lost'].indexOf(o.status) >= 0 ? o.status : 'placed',
       name: o.name || '', sportsbook: o.sportsbook || '', betType: o.betType || '',
-      wager: num(o.wager), payout: num(o.payout), odds: o.odds || '',
+      wager: num(o.wager), payout: num(o.payout), odds: o.odds || '', credit: !!o.credit,
       legs: (o.legs || []).map(function (l) { return { title: String(l.title || ''), state: l.state || '', odds: l.odds || '' }; }),
       updatedAt: o.updatedAt || 0, _h: o._h || '',   // cloud-sync stamps (see lib/cloud.js)
     };
   }
 
-  const logic = { ymd: ymd, today: today, weekStart: weekStart, addDays: addDays, profit: profit, summarize: summarize, filter: filter, group: group, rangeSummaries: rangeSummaries, makeEntry: makeEntry, num: num };
+  const logic = { toWinOf: toWinOf, payoutFromToWin: payoutFromToWin, ymd: ymd, today: today, weekStart: weekStart, addDays: addDays, profit: profit, summarize: summarize, filter: filter, group: group, rangeSummaries: rangeSummaries, makeEntry: makeEntry, num: num };
 
   /* ======================= UI (browser only) ======================= */
   if (typeof document === 'undefined') return Object.assign({ WEEK_START: WEEK_START }, logic);
@@ -149,8 +156,9 @@
       '<dialog id="dlgPfAdd"><div class="dlg">' +
         '<h2>Did it win or lose?</h2><p class="hint" id="pfaInfo"></p>' +
         '<div class="grid3"><label>Wager ($)<input id="pfaWager" inputmode="decimal"></label>' +
-        '<label>Payout ($)<input id="pfaPayout" inputmode="decimal"></label>' +
+        '<label><span id="pfaPayLbl">Payout ($)</span><input id="pfaPayout" inputmode="decimal"></label>' +
         '<label>Date<input id="pfaDate" type="date"></label></div>' +
+        '<label class="chk"><input type="checkbox" id="pfaCredit"> Offshore / credit bet <small>(enter the amount to win; a win pays it, a loss costs the wager)</small></label>' +
         '<p class="pf-err" id="pfaErr" hidden></p>' +
         '<div class="pf-choice"><button type="button" class="btn win" data-pick="won" aria-pressed="false">Won</button>' +
         '<button type="button" class="btn lose" data-pick="lost" aria-pressed="false">Lost</button></div>' +
@@ -163,7 +171,8 @@
         '<label>Name <input id="pfeName" placeholder="e.g. Sunday 5-leggers"></label>' +
         '<div class="grid2"><label>Status<select id="pfeStatus"><option value="placed">Placed</option><option value="won">Won</option><option value="lost">Lost</option></select></label>' +
         '<label>Date<input id="pfeDate" type="date"></label></div>' +
-        '<div class="grid2"><label>Wager ($)<input id="pfeWager" inputmode="decimal"></label><label>Payout ($) <input id="pfePayout" inputmode="decimal"></label></div>' +
+        '<div class="grid2"><label>Wager ($)<input id="pfeWager" inputmode="decimal"></label><label><span id="pfePayLbl">Payout ($)</span> <input id="pfePayout" inputmode="decimal"></label></div>' +
+        '<label class="chk"><input type="checkbox" id="pfeCredit"> Offshore / credit bet <small>(enter the amount to win)</small></label>' +
         '<p class="pf-err" id="pfeErr" hidden></p>' +
         '<div class="row"><button type="button" class="btn danger" id="pfeDelete">Delete</button><span class="grow"></span>' +
         '<button type="button" class="btn ghost" data-e="cancel">Cancel</button><button type="button" class="btn primary" data-e="save">Save</button></div>' +
@@ -173,6 +182,24 @@
 
   let addCtx = null, editCtx = null;
 
+  /* Switching a form between "payout" and "to win" re-expresses what is already typed in, so nothing changes in the money. */
+  function bindCredit(prefix) {
+    const box = $('#' + prefix + 'Credit'), pay = $('#' + prefix + 'Payout'), wag = $('#' + prefix + 'Wager'), lbl = $('#' + prefix + 'PayLbl');
+    const setLabel = function () { lbl.textContent = box.checked ? 'To win ($)' : 'Payout ($)'; };
+    box.addEventListener('change', function () {
+      const w = num(wag.value), v = num(pay.value);
+      if (v != null && w != null) pay.value = box.checked ? toWinOf(w, v) : payoutFromToWin(w, v);
+      setLabel();
+    });
+    return setLabel;
+  }
+  let labelAdd = function () {}, labelEdit = function () {};
+  /* what the form holds → the stored payout (total returned) */
+  function payoutField(prefix) {
+    const w = num($('#' + prefix + 'Wager').value), v = num($('#' + prefix + 'Payout').value);
+    return $('#' + prefix + 'Credit').checked ? payoutFromToWin(w, v) : v;
+  }
+
   /* Called by the tracker's "Clear slip" button.
      info = { parlay, status: 'won'|'lost'|'live'|'pending'|'void', legs:[{title,state,odds}] }; done() runs the actual clear. */
   function promptSave(info, done) {
@@ -181,8 +208,9 @@
     const label = (p.legs.length + '-Leg ' + (BET_LABEL[p.betType] || 'Parlay')) + (p.sportsbook ? ' · ' + p.sportsbook : '');
     const live = { won: 'Tracker says: WON ✓', lost: 'Tracker says: LOST ✕', live: 'Still in play', pending: 'Not started yet', void: 'Void' }[info.status] || '';
     $('#pfaInfo').textContent = label + ' — ' + live;
+    $('#pfaCredit').checked = !!p.credit; labelAdd();
     $('#pfaWager').value = p.wager == null ? '' : p.wager;
-    $('#pfaPayout').value = p.payout == null ? '' : p.payout;
+    $('#pfaPayout').value = p.payout == null ? '' : (p.credit ? toWinOf(p.wager, p.payout) : p.payout);
     $('#pfaDate').value = today();
     $('#pfaErr').hidden = true;
     // Pre-select what the tracker says if the slip is already settled; otherwise you must pick Won or Lost.
@@ -208,12 +236,12 @@
       if (act === 'cancel') { dlg.close(); addCtx = null; return; }
       if (act === 'discard') { dlg.close(); addCtx = null; ctx.done(); return; }
       const pick = ctx.pick; if (act !== 'save' || (pick !== 'won' && pick !== 'lost')) return;
-      const wager = num($('#pfaWager').value), payout = num($('#pfaPayout').value), date = $('#pfaDate').value || today();
+      const wager = num($('#pfaWager').value), payout = payoutField('pfa'), date = $('#pfaDate').value || today(), credit = $('#pfaCredit').checked;
       const err = $('#pfaErr');
       if (wager == null) { err.textContent = 'Enter the wager so the money totals are right.'; err.hidden = false; return; }
-      if (pick === 'won' && payout == null) { err.textContent = 'Enter the payout (total returned, including your stake) so winnings count.'; err.hidden = false; return; }
+      if (pick === 'won' && payout == null) { err.textContent = credit ? 'Enter the amount to win so winnings count.' : 'Enter the payout (total returned, including your stake) so winnings count.'; err.hidden = false; return; }
       U.entries.unshift(makeEntry({
-        date: date, status: pick, name: p.name, sportsbook: p.sportsbook, betType: p.betType, wager: wager, payout: payout, odds: p.odds, legs: ctx.info.legs,
+        date: date, status: pick, name: p.name, sportsbook: p.sportsbook, betType: p.betType, wager: wager, payout: payout, odds: p.odds, credit: credit, legs: ctx.info.legs,
       }));
       save(); dlg.close(); addCtx = null; render();
       toast('Saved to portfolio — ' + pick.toUpperCase() + '.');
@@ -227,7 +255,8 @@
     const e = entry || makeEntry({});
     $('#pfeTitle').textContent = isNew ? 'Log a bet' : 'Edit slip';
     $('#pfeName').value = e.name || ''; $('#pfeStatus').value = e.status; $('#pfeDate').value = e.date;
-    $('#pfeWager').value = e.wager == null ? '' : e.wager; $('#pfePayout').value = e.payout == null ? '' : e.payout;
+    $('#pfeCredit').checked = !!e.credit; labelEdit();
+    $('#pfeWager').value = e.wager == null ? '' : e.wager; $('#pfePayout').value = e.payout == null ? '' : (e.credit ? toWinOf(e.wager, e.payout) : e.payout);
     $('#pfeDelete').hidden = isNew; $('#pfeErr').hidden = true;
     $('#dlgPfEdit').showModal();
   }
@@ -237,10 +266,10 @@
     dlg.addEventListener('click', function (ev) {
       const b = ev.target.closest('[data-e]'); if (!b) return;
       if (b.dataset.e === 'cancel') { dlg.close(); return; }
-      const wager = num($('#pfeWager').value), payout = num($('#pfePayout').value), status = $('#pfeStatus').value, err = $('#pfeErr');
+      const wager = num($('#pfeWager').value), payout = payoutField('pfe'), status = $('#pfeStatus').value, err = $('#pfeErr'), credit = $('#pfeCredit').checked;
       if (wager == null) { err.textContent = 'Wager is required.'; err.hidden = false; return; }
-      if (status === 'won' && payout == null) { err.textContent = 'A won slip needs its payout (total returned).'; err.hidden = false; return; }
-      const fields = { name: $('#pfeName').value.trim(), status: status, date: $('#pfeDate').value || today(), wager: wager, payout: payout };
+      if (status === 'won' && payout == null) { err.textContent = credit ? 'A won slip needs the amount it won.' : 'A won slip needs its payout (total returned).'; err.hidden = false; return; }
+      const fields = { name: $('#pfeName').value.trim(), status: status, date: $('#pfeDate').value || today(), wager: wager, payout: payout, credit: credit };
       if (editCtx.id) { const e = U.entries.find(function (x) { return x.id === editCtx.id; }); if (e) Object.assign(e, fields); }
       else U.entries.unshift(makeEntry(fields));
       save(); dlg.close(); render();
@@ -278,9 +307,10 @@
       return '<button class="btn small st-' + st + (e.status === st ? ' on' : '') + '" data-st="' + st + '">' + st.charAt(0).toUpperCase() + st.slice(1) + '</button>';
     }).join('');
     return '<article class="pfe e-' + e.status + '" data-id="' + e.id + '">' +
-      '<div class="pfe-top"><div class="pfe-title">' + title + '<small>' + esc([e.sportsbook, dayLabel(e.date)].filter(Boolean).join(' · ')) + '</small></div>' +
+      '<div class="pfe-top"><div class="pfe-title">' + title + '<small>' + esc([e.sportsbook, e.credit ? 'Offshore · credit' : '', dayLabel(e.date)].filter(Boolean).join(' · ')) + '</small></div>' +
       '<span class="pill ' + (e.status === 'placed' ? 'live' : e.status) + '">' + e.status + '</span></div>' +
-      '<div class="pfe-money"><span>Wager <b>' + usd(e.wager) + '</b></span><span>Payout <b>' + usd(e.payout) + '</b></span>' + res + '</div>' +
+      '<div class="pfe-money">' + (e.credit ? '<span>Risk <b>' + usd(e.wager) + '</b></span><span>To win <b>' + usd(toWinOf(e.wager, e.payout)) + '</b></span>'
+        : '<span>Wager <b>' + usd(e.wager) + '</b></span><span>Payout <b>' + usd(e.payout) + '</b></span>') + res + '</div>' +
       legs + '<div class="pfe-btns">' + sb + '<span class="grow"></span><button class="btn small" data-edit>Edit</button></div></article>';
   }
 
@@ -293,7 +323,7 @@
     const stats = [['placed', 'Placed'], ['won', 'Won'], ['lost', 'Lost']];
     let html =
       '<div class="pf-cards">' + statCard('Today', R.today) + statCard('This week', R.week) + statCard('YTD ' + new Date().getFullYear(), R.ytd) + '</div>' +
-      '<div class="pf-ytd">YTD record <b>' + R.ytd.won + '–' + R.ytd.lost + '</b> · win rate <b>' + pct(R.ytd.winRate) + '</b> · ROI <b>' + pct(R.ytd.roi) + '</b> · wagered <b>' + usd(R.ytd.wagered) + '</b></div>' +
+      '<div class="pf-ytd">YTD record <b>' + R.ytd.won + '–' + R.ytd.lost + '</b> · win rate <b>' + pct(R.ytd.winRate) + '</b> · ROI <b>' + pct(R.ytd.roi) + '</b> · wagered <b>' + usd(R.ytd.wagered) + '</b>' + (R.ytd.creditWagered ? ' <span class="sub">(' + usd(R.ytd.cashWagered) + ' cash + ' + usd(R.ytd.creditWagered) + ' credit)</span>' : '') + '</div>' +
       '<div class="pf-ctrl"><div class="segctl">' + modes.map(function (m) { return '<button data-mode="' + m[0] + '" class="' + (U.mode === m[0] ? 'on' : '') + '">' + m[1] + '</button>'; }).join('') + '</div>' +
       '<div class="chips">' + stats.map(function (m) { return '<button data-status="' + m[0] + '" class="chip st-' + m[0] + (U.status === m[0] ? ' on' : '') + '">' + m[1] + '</button>'; }).join('') + '</div>' +
       '<div class="pf-date"><label>Jump to date <input type="date" id="pfDate" value="' + esc(U.date) + '"></label>' + (U.date ? '<button class="btn small" id="pfDateClear">Clear</button>' : '') + '</div>' +
@@ -310,9 +340,9 @@
   }
 
   function csv() {
-    const rows = [['date', 'status', 'name', 'sportsbook', 'wager', 'payout', 'profit', 'legs']];
+    const rows = [['date', 'status', 'name', 'sportsbook', 'credit', 'wager', 'payout', 'profit', 'legs']];
     U.entries.slice().sort(byNewest).forEach(function (e) {
-      rows.push([e.date, e.status, e.name, e.sportsbook, e.wager == null ? '' : e.wager, e.payout == null ? '' : e.payout, profit(e), e.legs.map(function (l) { return l.title; }).join(' | ')]);
+      rows.push([e.date, e.status, e.name, e.sportsbook, e.credit ? 'yes' : '', e.wager == null ? '' : e.wager, e.payout == null ? '' : e.payout, profit(e), e.legs.map(function (l) { return l.title; }).join(' | ')]);
     });
     const text = rows.map(function (r) { return r.map(function (c) { return '"' + String(c).replace(/"/g, '""') + '"'; }).join(','); }).join('\n');
     const a = document.createElement('a');
@@ -331,7 +361,7 @@
   }
 
   function init() {
-    load(); buildDialogs(); wireAdd(); wireEdit();
+    load(); buildDialogs(); wireAdd(); wireEdit(); labelAdd = bindCredit('pfa'); labelEdit = bindCredit('pfe');
     document.querySelectorAll('#tabs [data-view]').forEach(function (b) { b.addEventListener('click', function () { showView(b.dataset.view); }); });
     const root = $('#viewPortfolio'); if (!root) return;
     root.addEventListener('click', function (e) {

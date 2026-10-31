@@ -9,7 +9,7 @@
   const LS_COLLAPSED = 'parlay-tracker.collapsed.v1', LS_BETS = 'parlay-tracker.v1', LS_KEY = 'parlay-tracker.apiKey';
   // GitHub Pages frontend talks to the Render API. Keep this URL public; never put API keys here.
   const API_BASE = 'https://nfl-parlay-tracker.onrender.com';
-  const S = { parlays: [], games: {}, gamesList: [], expanded: new Set(), collapsed: new Set(), gamesOpen: false, pending: [], config: {}, timer: null, demoTimer: null, lastUpdate: null, busy: false, again: false, fetchError: null, serverDown: false };
+  const S = { parlays: [], games: {}, gamesList: [], expanded: new Set(), collapsed: new Set(), gamesOpen: false, gamesExpanded: new Set(), pending: [], config: {}, timer: null, demoTimer: null, lastUpdate: null, busy: false, again: false, fetchError: null, serverDown: false };
 
   /* ---------------- storage ---------------- */
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -299,16 +299,26 @@
     return changed;
   }
 
+  /* Odds come from the money (wager → payout), not from the model's reading of the slip; a value you typed yourself is kept. */
+  function applyOdds(p) {
+    if (p.oddsUser === true) return false;
+    const o = E.oddsFromMoney(p.wager, p.payout);
+    if (!o || p.odds === o) return false;
+    p.odds = o; return true;
+  }
+
   function buildParlay(bet, thumb) {
     const wager = num(bet.wager);
     let payout = num(bet.payout);
     const toWin = num(bet.to_win);
     if (payout == null && wager != null && toWin != null) payout = Math.round((wager + toWin) * 100) / 100;
-    return {
-      id: uid(), createdAt: Date.now(), name: '', sportsbook: bet.sportsbook || '', betType: bet.bet_type || 'parlay',
+    const p = {
+      id: uid(), createdAt: Date.now(), name: '', sportsbook: bet.sportsbook || '', betType: bet.bet_type || 'parlay', credit: false,
       wager: wager, payout: payout, odds: bet.total_odds || '', slipStatus: bet.slip_status || '', warnings: bet.warnings || [],
       thumb: thumb || null, legs: (bet.legs || []).map(normLeg),
     };
+    applyOdds(p);
+    return p;
   }
 
   /* ---------------- rendering ---------------- */
@@ -382,7 +392,7 @@
     const sum = E.summarize(results);
     const pill = { pending: ['pending', 'Not started'], live: ['live', 'Live · ' + sum.hits + '/' + sum.total + ' ✓'], won: ['won', 'Won ✓'], lost: ['lost', 'Lost ✕'], void: ['void', 'Void'] }[sum.status];
     const title = (p.name ? esc(p.name) : (p.legs.length + '-Leg ' + (BET_LABEL[p.betType] || 'Parlay'))) +
-      '<small>' + (p.name ? p.legs.length + '-Leg ' + esc(BET_LABEL[p.betType] || 'Parlay') + ' · ' : '') + esc(p.sportsbook || (p.demo ? 'Demo' : 'Bet slip')) + '</small>';
+      '<small>' + (p.name ? p.legs.length + '-Leg ' + esc(BET_LABEL[p.betType] || 'Parlay') + ' · ' : '') + esc((p.sportsbook || (p.demo ? 'Demo' : 'Bet slip')) + (p.credit ? ' · Offshore (credit)' : '')) + '</small>';
     const segs = results.map(function (r) { return '<i class="seg ' + (['hit', 'miss', 'live', 'push', 'void'].indexOf(r.state) >= 0 ? r.state : '') + '"></i>'; }).join('');
     const shownWarns = (p.warnings || []).filter(usefulWarning);
     const warns = shownWarns.length ? '<div class="hint" style="color:#fbbf24;margin-top:8px">⚠ ' + shownWarns.map(esc).join(' · ') + '</div>' : '';
@@ -391,7 +401,10 @@
     return '<article class="parlay p-' + sum.status + (collapsed ? ' collapsed' : '') + '" data-p="' + p.id + '">' +
       '<div class="ph" role="button" tabindex="0" aria-expanded="' + !collapsed + '"><div class="ph-top"><div class="ph-title">' + title + '</div><span class="pill ' + pill[0] + '">' + esc(pill[1]) + '</span><span class="chev" aria-hidden="true"></span></div>' +
 
-      '<div class="money"><div><label>WAGER</label><b>' + money(p.wager) + '</b></div><div class="payout"><label>PAYOUT</label><b>' + money(p.payout) + '</b></div><div><label>ODDS</label><b>' + esc(p.odds || '—') + '</b></div></div>' +
+      '<div class="money">' + (p.credit
+        ? '<div><label>RISK</label><b>' + money(p.wager) + '</b></div><div class="payout"><label>TO WIN</label><b>' + money(p.wager != null && p.payout != null ? Math.round((p.payout - p.wager) * 100) / 100 : null) + '</b></div>'
+        : '<div><label>WAGER</label><b>' + money(p.wager) + '</b></div><div class="payout"><label>PAYOUT</label><b>' + money(p.payout) + '</b></div>') +
+      '<div><label>ODDS</label><b>' + esc(p.odds || '—') + '</b></div></div>' +
       '<div class="segs">' + segs + '</div>' + warns + '</div>' +
       '<div class="pbody"' + (collapsed ? ' hidden' : '') + '>' +
       '<ul class="legs">' + legsSorted.map(function (l, i) { return legHTML(p, l, results[i]); }).join('') + '</ul>' +
@@ -399,6 +412,26 @@
   }
 
   /* ---------------- all-games dropdown (only when slips cover different games) ---------------- */
+  // Each game is a row; open it to see every market on that game once, with the bets it is part of.
+  const MARKET_ORDER = { moneyline: 0, spread: 1, total: 2, team_total: 3 };
+  const GLYPH = { hit: '✓', miss: '✕', push: '–', void: '∅', unresolved: '?', live: '●', pending: '○' };
+  function gameLegs(gameId, slips, names) {
+    const byKey = {};
+    slips.forEach(function (p, pi) {
+      p.legs.forEach(function (l) {
+        if (l.gameId !== gameId) return;
+        const r = E.evaluateLeg(l, S.games[gameId] || null);
+        const key = r.title + '|' + (l.period || 'full');
+        const e = byKey[key] = byKey[key] || { r: r, market: l.market, bets: [] };
+        if (e.bets.indexOf(pi) < 0) e.bets.push(pi);
+      });
+    });
+    return Object.keys(byKey).map(function (k) { return byKey[k]; }).sort(function (x, y) {
+      const a = MARKET_ORDER[x.market] == null ? 9 : MARKET_ORDER[x.market], b = MARKET_ORDER[y.market] == null ? 9 : MARKET_ORDER[y.market];
+      return a - b || (x.r.title < y.r.title ? -1 : 1);
+    }).map(function (e) { e.names = e.bets.map(function (pi) { return names[pi]; }); return e; });
+  }
+
   function renderGames() {
     const el = $('#gamesPanel'); if (!el) return;
     const slips = S.parlays.filter(function (p) { return p.legs.some(function (l) { return l.gameId && S.games[l.gameId]; }); });
@@ -416,16 +449,37 @@
     rows.sort(function (a, b) { const x = Date.parse(a.g.date), y = Date.parse(b.g.date); return (isNaN(x) ? Infinity : x) - (isNaN(y) ? Infinity : y); });
     const labels = slips.map(function (p) { return p.name || (p.legs.length + '-Leg ' + (BET_LABEL[p.betType] || 'Parlay')); });
     const seen = {};
-    const names = labels.map(function (n, i) { const dup = labels.filter(function (x) { return x === n; }).length > 1; seen[n] = (seen[n] || 0) + 1; return dup ? n + ' #' + seen[n] : n; });
+    const names = labels.map(function (n) { const dup = labels.filter(function (x) { return x === n; }).length > 1; seen[n] = (seen[n] || 0) + 1; return dup ? n + ' #' + seen[n] : n; });
     const open = !!S.gamesOpen;
     el.hidden = false;
     el.innerHTML = '<button class="gp-head" type="button" aria-expanded="' + open + '" data-gp="toggle"><span><b>All games</b><small>' + rows.length + ' games across ' + slips.length + ' slips</small></span><span class="chev' + (open ? '' : ' down') + '" aria-hidden="true"></span></button>' +
       '<div class="gp-body"' + (open ? '' : ' hidden') + '>' + rows.map(function (r) {
-        const g = r.g, pre = g.state === 'pre';
-        return '<div class="gp-row"><div class="gp-main"><span class="gp-teams">' + esc(g.away.abbr) + (pre ? '' : ' <b>' + esc(g.away.score) + '</b>') + ' @ ' + esc(g.home.abbr) + (pre ? '' : ' <b>' + esc(g.home.score) + '</b>') + '</span>' +
-          '<span class="gp-status' + (g.state === 'in' ? ' live' : '') + '">' + esc(E.gameStatusText(g)) + '</span></div>' +
-          '<div class="gp-chips">' + r.slips.map(function (pi) { return '<span class="gp-chip">' + esc(names[pi]) + '</span>'; }).join('') + '</div></div>';
-      }).join('') + '</div>';
+        const g = r.g, pre = g.state === 'pre', gid = g.id, isOpen = S.gamesExpanded.has(gid);
+        const legs = gameLegs(gid, slips, names);
+        const legHtml = !isOpen ? '' : '<ul class="gp-legs">' + legs.map(function (e) {
+          const rr = e.r, prog = rr.kind === 'bar' || rr.kind === 'total' ? (rr.valueText != null && rr.targetText != null ? rr.valueText + ' / ' + rr.targetText + (rr.unit ? ' ' + rr.unit : '') : '') : (rr.scoreText || '');
+          return '<li class="gp-leg st-' + esc(rr.state) + '"><i aria-hidden="true">' + (GLYPH[rr.state] || '○') + '</i><div class="gp-ltxt"><span class="gp-ltitle">' + esc(rr.title) + '</span>' +
+            (prog ? '<span class="gp-lprog">' + esc(prog) + '</span>' : '') +
+            '<div class="gp-chips">' + e.names.map(function (n) { return '<span class="gp-chip">' + esc(n) + '</span>'; }).join('') + '</div></div></li>';
+        }).join('') + '</ul>';
+        return '<div class="gp-row' + (isOpen ? ' open' : '') + '"><button type="button" class="gp-main" data-gp-game="' + esc(gid) + '" aria-expanded="' + isOpen + '"><span class="gp-teams">' + esc(g.away.abbr) + (pre ? '' : ' <b>' + esc(g.away.score) + '</b>') + ' @ ' + esc(g.home.abbr) + (pre ? '' : ' <b>' + esc(g.home.score) + '</b>') + '</span>' +
+          '<span class="gp-right"><span class="gp-count">' + legs.length + ' bet' + (legs.length === 1 ? '' : 's') + '</span><span class="gp-status' + (g.state === 'in' ? ' live' : '') + '">' + esc(E.gameStatusText(g)) + '</span><span class="chev' + (isOpen ? '' : ' down') + '" aria-hidden="true"></span></span></button>' + legHtml + '</div>';
+      }).join('') + gamesTotals(slips) + '</div>';
+  }
+
+  /* Total risk and total to win across every slip in the panel (credit and cash alike). */
+  function gamesTotals(slips) {
+    let risk = 0, win = 0, counted = 0;
+    slips.forEach(function (p) {
+      if (p.wager == null) return;
+      risk += p.wager; counted++;
+      if (p.payout != null) win += p.payout - p.wager;
+    });
+    if (!counted) return '';
+    const credit = slips.reduce(function (n, p) { return n + (p.credit && p.wager != null ? p.wager : 0); }, 0);
+    return '<div class="gp-total"><div><label>TOTAL RISK</label><b>' + money(Math.round(risk * 100) / 100) + '</b>' + (credit ? '<small>incl. ' + money(Math.round(credit * 100) / 100) + ' credit</small>' : '') + '</div>' +
+      '<div><label>TO WIN</label><b class="win">' + money(Math.round(win * 100) / 100) + '</b></div>' +
+      '<div><label>SLIPS</label><b>' + counted + '</b></div></div>';
   }
 
   function render() {
@@ -532,6 +586,7 @@
       S.fetchError = err; S.serverDown = false;
       S.lastUpdate = Date.now();
       refreshNames();
+      S.parlays.forEach(function (p) { if (!p.demo) applyOdds(p); });
       auditLegs();
       save();
     } catch (e) { S.fetchError = e.message; }
@@ -700,9 +755,14 @@
   /* ---- dialogs ---- */
   let editing = null;
 
+  const r2 = function (x) { return Math.round(x * 100) / 100; };
+  const payLabel = function () { $('#bPayLbl').textContent = $('#bCredit').checked ? 'To win ($)' : 'Payout ($)'; };
+
   function openBetDialog(p) {
     editing = { p: p };
-    $('#bName').value = p.name || ''; $('#bWager').value = p.wager == null ? '' : p.wager; $('#bPayout').value = p.payout == null ? '' : p.payout;
+    $('#bName').value = p.name || ''; $('#bWager').value = p.wager == null ? '' : p.wager;
+    $('#bCredit').checked = !!p.credit; payLabel();
+    $('#bPayout').value = p.payout == null ? '' : (p.credit ? r2(p.payout - (p.wager || 0)) : p.payout);
     $('#bOdds').value = p.odds || ''; $('#bBook').value = p.sportsbook || '';
     $('#dlgBet').returnValue = ''; $('#dlgBet').showModal();
   }
@@ -743,13 +803,25 @@
   }
 
   function wireDialogs() {
+    $('#bCredit').addEventListener('change', function () {      // re-express what is typed so the money doesn't change
+      const w = num($('#bWager').value), v = num($('#bPayout').value);
+      if (w != null && v != null) $('#bPayout').value = $('#bCredit').checked ? r2(v - w) : r2(v + w);
+      payLabel();
+    });
     $('#dlgBet').addEventListener('close', function () {
       if ($('#dlgBet').returnValue !== 'save' || !editing) return;
       const p = editing.p;
       const typed = $('#bName').value.trim();
       if (typed !== (p.name || '')) { p.autoName = typed === ''; p.name = typed; if (!typed) refreshNames(); }
-      p.wager = num($('#bWager').value); p.payout = num($('#bPayout').value);
-      p.odds = $('#bOdds').value.trim(); p.sportsbook = $('#bBook').value.trim();
+      p.credit = $('#bCredit').checked;
+      p.wager = num($('#bWager').value);
+      const entered = num($('#bPayout').value);
+      p.payout = p.credit ? (entered != null && p.wager != null ? r2(p.wager + entered) : null) : entered;   // credit slips are typed as "to win"
+      const typedOdds = $('#bOdds').value.trim();
+      if (typedOdds === '') { p.oddsUser = false; p.odds = ''; }
+      else if (typedOdds !== (p.odds || '')) { p.oddsUser = true; p.odds = typedOdds; }
+      applyOdds(p);
+      p.sportsbook = $('#bBook').value.trim();
       save(); render();
     });
     $('#btnDeleteBet').addEventListener('click', function () {
@@ -829,6 +901,8 @@
       if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('leg')) { e.preventDefault(); toggleLeg(e.target.dataset.leg); }
     });
     $('#gamesPanel').addEventListener('click', function (e) {
+      const row = e.target.closest('[data-gp-game]');
+      if (row) { const id = row.dataset.gpGame; if (S.gamesExpanded.has(id)) S.gamesExpanded.delete(id); else S.gamesExpanded.add(id); renderGames(); return; }
       if (!e.target.closest('[data-gp="toggle"]')) return;
       S.gamesOpen = !S.gamesOpen; try { lsSet('parlay-tracker.gamesopen.v1', S.gamesOpen ? '1' : '0'); } catch (x) { /* ignore */ }
       renderGames();
