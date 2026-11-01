@@ -43,6 +43,7 @@ test('the app wires credit slips, auto odds, and the games panel with totals', f
   const src = fs.readFileSync(path.join(__dirname, '../public/app.js'), 'utf8');
   const html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
   assert.ok(/id="bCredit"/.test(html) && /id="bPayLbl"/.test(html));
+  assert.ok(/data-act="offshore"/.test(src) && /name === 'offshore'/.test(src), 'one-tap Offshore button on every slip');
   assert.ok(/applyOdds\(p\)/.test(src) && /oddsUser/.test(src), 'odds are derived unless you typed your own');
   assert.ok(/<label>RISK<\/label>/.test(src) && /<label>TO WIN<\/label>/.test(src), 'credit slips show risk / to win');
   assert.ok(/data-gp-game/.test(src) && /gamesExpanded/.test(src) && /gameLegs\(/.test(src), 'each game expands to its markets');

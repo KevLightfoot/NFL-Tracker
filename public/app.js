@@ -463,8 +463,28 @@
             '<div class="gp-chips">' + e.names.map(function (n) { return '<span class="gp-chip">' + esc(n) + '</span>'; }).join('') + '</div></div></li>';
         }).join('') + '</ul>';
         return '<div class="gp-row' + (isOpen ? ' open' : '') + '"><button type="button" class="gp-main" data-gp-game="' + esc(gid) + '" aria-expanded="' + isOpen + '"><span class="gp-teams">' + esc(g.away.abbr) + (pre ? '' : ' <b>' + esc(g.away.score) + '</b>') + ' @ ' + esc(g.home.abbr) + (pre ? '' : ' <b>' + esc(g.home.score) + '</b>') + '</span>' +
-          '<span class="gp-right"><span class="gp-count">' + legs.length + ' bet' + (legs.length === 1 ? '' : 's') + '</span><span class="gp-status' + (g.state === 'in' ? ' live' : '') + '">' + esc(E.gameStatusText(g)) + '</span><span class="chev' + (isOpen ? '' : ' down') + '" aria-hidden="true"></span></span></button>' + legHtml + '</div>';
+          '<span class="gp-right"><span class="gp-count">' + legs.length + ' bet' + (legs.length === 1 ? '' : 's') + '</span><span class="gp-status' + (g.state === 'in' ? ' live' : '') + '">' + esc(E.gameStatusText(g)) + '</span><span class="chev' + (isOpen ? '' : ' down') + '" aria-hidden="true"></span></span></button>' + sitHtml(g) + legHtml + '</div>';
       }).join('') + gamesTotals(slips) + '</div>';
+  }
+
+  /* Live football tracker for a game row: who has the ball, down & distance, and a little field with the ball and first-down line. */
+  function sitHtml(g) {
+    const t = g && g.sit;
+    if (!t || g.state !== 'in' || /half|end of|final|delay|postponed/i.test(String(g.detail || '') + ' ' + String(g.clock || ''))) return '';
+    const pct = function (x) { return Math.max(0, Math.min(100, (10 + x) / 120 * 100)); };
+    const dirCls = t.poss === 'away' ? 'r' : t.poss === 'home' ? 'l' : '';
+    const head = (t.possAbbr ? '<b class="gp-ball">' + esc(t.possAbbr) + ' ball</b>' : '') +
+      (t.dd ? '<span class="gp-dd">' + esc(t.dd) + '</span>' : '') +
+      (t.spot ? '<span class="gp-spot">at ' + esc(t.spot) + '</span>' : '') +
+      (t.red ? '<span class="gp-red">RED ZONE</span>' : '');
+    const field = t.x == null ? '' :
+      '<div class="gp-field" role="img" aria-label="' + esc((t.possAbbr ? t.possAbbr + ' ball, ' : '') + (t.dd ? t.dd + ', ' : '') + (t.spot ? 'at ' + t.spot : '')) + '">' +
+        '<span class="gp-ez a">' + esc(g.away.abbr) + '</span><span class="gp-ez h">' + esc(g.home.abbr) + '</span>' +
+        (t.poss && t.toGoal != null ? '<span class="gp-drive ' + dirCls + '" style="left:' + pct(Math.min(t.x, t.x + (dirCls === 'r' ? 1 : -1) * t.toGoal)).toFixed(2) + '%;width:' + (Math.abs(pct(t.x) - pct(dirCls === 'r' ? 100 : 0))).toFixed(2) + '%"></span>' : '') +
+        (t.fd != null ? '<span class="gp-fd" style="left:' + pct(t.fd).toFixed(2) + '%"></span>' : '') +
+        '<span class="gp-puck ' + dirCls + '" style="left:' + pct(t.x).toFixed(2) + '%"></span></div>';
+    return '<div class="gp-sit"' + (t.red ? ' data-red="1"' : '') + '><div class="gp-sit-top">' + head + '</div>' + field +
+      (t.last ? '<div class="gp-last">' + esc(t.last) + '</div>' : '') + '</div>';
   }
 
   /* Total risk and total to win across every slip in the panel (credit and cash alike). */

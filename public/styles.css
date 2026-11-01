@@ -254,3 +254,24 @@ label.chk small { color: var(--muted); font-size: 12px; }
 .acct .hint.err { color: #fca5a5; } .acct .hint.ok { color: #4ade80; }
 
 .acct-h { margin: 0; font-size: 15px; }
+.btn.small.on { background: #3a2c0b; border-color: #a9791b; color: #fbbf24; }
+
+/* live football tracker in the games panel */
+.gp-sit { padding: 0 14px 13px; margin-top: -4px; }
+.gp-sit-top { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 13px; }
+.gp-ball { color: #fbbf24; }
+.gp-dd { font-weight: 700; }
+.gp-spot { color: var(--muted); }
+.gp-red { color: #fff; background: #b91c1c; font-size: 10.5px; font-weight: 800; letter-spacing: .06em; padding: 2px 6px; border-radius: 6px; }
+.gp-field { position: relative; height: 26px; margin-top: 8px; border-radius: 6px; overflow: hidden; border: 1px solid #1f3b2c;
+  background: linear-gradient(90deg, #14532d 0, #14532d 8.333%, transparent 8.333%, transparent 91.667%, #14532d 91.667%),
+              repeating-linear-gradient(90deg, #166534 0, #166534 8.333%, #15803d 8.333%, #15803d 16.666%); }
+.gp-ez { position: absolute; top: 0; bottom: 0; width: 8.333%; display: flex; align-items: center; justify-content: center; font-size: 8.5px; font-weight: 800; color: rgba(255,255,255,.75); letter-spacing: .02em; }
+.gp-ez.a { left: 0; } .gp-ez.h { right: 0; }
+.gp-drive { position: absolute; top: 9px; height: 8px; background: rgba(251,191,36,.28); border-radius: 4px; }
+.gp-fd { position: absolute; top: 0; bottom: 0; width: 3px; margin-left: -1.5px; background: #fde047; box-shadow: 0 0 6px #fde047; }
+.gp-puck { position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: #92400e; border: 2px solid #fff; box-shadow: 0 0 0 2px rgba(0,0,0,.35); }
+.gp-puck.r::after, .gp-puck.l::after { content: ''; position: absolute; top: 50%; margin-top: -4px; border: 4px solid transparent; }
+.gp-puck.r::after { left: 100%; margin-left: 3px; border-left: 6px solid #fff; border-right: 0; }
+.gp-puck.l::after { right: 100%; margin-right: 3px; border-right: 6px solid #fff; border-left: 0; }
+.gp-last { margin-top: 7px; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

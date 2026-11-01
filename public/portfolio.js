@@ -158,7 +158,7 @@
         '<div class="grid3"><label>Wager ($)<input id="pfaWager" inputmode="decimal"></label>' +
         '<label><span id="pfaPayLbl">Payout ($)</span><input id="pfaPayout" inputmode="decimal"></label>' +
         '<label>Date<input id="pfaDate" type="date"></label></div>' +
-        '<label class="chk"><input type="checkbox" id="pfaCredit"> Offshore / credit bet <small>(enter the amount to win; a win pays it, a loss costs the wager)</small></label>' +
+        '<label class="chk"><input type="checkbox" id="pfaCredit"> Offshore / credit bet</label>' +
         '<p class="pf-err" id="pfaErr" hidden></p>' +
         '<div class="pf-choice"><button type="button" class="btn win" data-pick="won" aria-pressed="false">Won</button>' +
         '<button type="button" class="btn lose" data-pick="lost" aria-pressed="false">Lost</button></div>' +
@@ -172,7 +172,7 @@
         '<div class="grid2"><label>Status<select id="pfeStatus"><option value="placed">Placed</option><option value="won">Won</option><option value="lost">Lost</option></select></label>' +
         '<label>Date<input id="pfeDate" type="date"></label></div>' +
         '<div class="grid2"><label>Wager ($)<input id="pfeWager" inputmode="decimal"></label><label><span id="pfePayLbl">Payout ($)</span> <input id="pfePayout" inputmode="decimal"></label></div>' +
-        '<label class="chk"><input type="checkbox" id="pfeCredit"> Offshore / credit bet <small>(enter the amount to win)</small></label>' +
+        '<label class="chk"><input type="checkbox" id="pfeCredit"> Offshore / credit bet</label>' +
         '<p class="pf-err" id="pfeErr" hidden></p>' +
         '<div class="row"><button type="button" class="btn danger" id="pfeDelete">Delete</button><span class="grow"></span>' +
         '<button type="button" class="btn ghost" data-e="cancel">Cancel</button><button type="button" class="btn primary" data-e="save">Save</button></div>' +

@@ -179,6 +179,77 @@
     };
   }
 
+
+  /* Live football situation (who has the ball, down & distance, where on the field).
+     ESPN puts it in competition.situation on the scoreboard; the summary may carry it in several places, so this takes any of them:
+       { possession: <team id>, down, distance, yardLine, possessionText: "TEX 35", downDistanceText: "2nd & 7 at TEX 35",
+         shortDownDistanceText: "2nd & 7", isRedZone, lastPlay: { text }, homeTimeouts, awayTimeouts }
+     Returns null when there is nothing trustworthy to show. Never throws. */
+  function ordinal(d) { return { 1: '1st', 2: '2nd', 3: '3rd', 4: '4th' }[d] || ''; }
+  function parseSituation(s, g, league) {
+    try {
+      if (!s || typeof s !== 'object' || !g || !g.away || !g.home) return null;
+      league = cleanLeague(league || g.league);
+      if (SPORT[league] !== 'football') return null;
+      const idOf = function (x) { return x == null ? '' : String(typeof x === 'object' ? (x.id != null ? x.id : (x.$ref ? String(x.$ref).replace(/\D+/g, ' ').trim().split(' ').pop() : '')) : x).trim(); };
+      const side = function (id) { return id && id === g.away.id ? 'away' : id && id === g.home.id ? 'home' : null; };
+      const sideOfAbbr = function (a) { a = canonAbbr(a, league); return a && a === g.away.abbr ? 'away' : a && a === g.home.abbr ? 'home' : null; };
+      const poss = side(idOf(s.possession != null ? s.possession : s.team));
+      const short = String(s.shortDownDistanceText || '').trim();
+      const long = String(s.downDistanceText || '').trim();
+      const down = n(s.down) > 0 && n(s.down) <= 4 ? n(s.down) : (function () { const m = (short || long).match(/\b([1-4])(?:st|nd|rd|th)\b/i); return m ? +m[1] : 0; })();
+      const goal = /&\s*goal|goal to go|\bat goal\b/i.test(short + ' ' + long);
+      let dist = n(s.distance) > 0 ? n(s.distance) : (function () { const m = (short || long).match(/&\s*(\d{1,3})\b/); return m ? +m[1] : 0; })();
+      // where the ball is: "at TEX 35" / "TEX 35" / "50"
+      let spotSide = null, spotYd = null;
+      const where = String(s.possessionText || '').trim() || (long.match(/\bat\s+(.+)$/i) || [])[1] || '';
+      let m = where.match(/^([A-Za-z&.'-]{2,6})\s+(\d{1,2})$/);
+      if (m) { spotSide = sideOfAbbr(m[1]); spotYd = +m[2]; }
+      else if (/^(?:the\s+)?(?:50|midfield)$/i.test(where.trim())) { spotYd = 50; }
+      if (spotYd != null && (spotYd < 1 || spotYd > 50)) { spotYd = null; spotSide = null; }
+      if (spotYd != null && spotYd !== 50 && !spotSide) spotYd = null;      // a yard line that isn't on either team: don't guess
+      // numeric fallback: ESPN's yardLine counts from the possessing team's own goal line
+      if (spotYd == null && !where && poss && n(s.yardLine) > 0 && n(s.yardLine) < 100) {
+        const fromOwn = n(s.yardLine);
+        if (fromOwn === 50) spotYd = 50;
+        else if (fromOwn < 50) { spotYd = fromOwn; spotSide = poss; }
+        else { spotYd = 100 - fromOwn; spotSide = poss === 'away' ? 'home' : 'away'; }
+      }
+      if (spotYd == null && !down) return null;                                 // nothing to show
+      // x: yards from the away goal line (0) to the home goal line (100)
+      let x = null;
+      if (spotYd != null) x = spotYd === 50 ? 50 : spotSide === 'away' ? spotYd : 100 - spotYd;
+      const dir = poss === 'away' ? 1 : poss === 'home' ? -1 : 0;
+      let toGoal = null;
+      if (x != null && dir) toGoal = dir > 0 ? 100 - x : x;
+      let fd = null;                                                              // first-down line, same scale as x
+      if (x != null && dir && dist && !goal && toGoal != null && dist < toGoal) fd = x + dir * dist;
+      const dd = down ? ordinal(down) + ' & ' + (goal ? 'Goal' : (dist || '')) : '';
+      const spotText = spotYd == null ? '' : spotYd === 50 ? 'the 50' : g[spotSide].abbr + ' ' + spotYd;
+      const last = s.lastPlay && (s.lastPlay.text || s.lastPlay.shortText) ? String(s.lastPlay.text || s.lastPlay.shortText).trim() : '';
+      return {
+        poss: poss, possAbbr: poss ? g[poss].abbr : '', down: down, dist: goal ? 0 : dist, goal: goal,
+        dd: dd.replace(/\s*&\s*$/, ''), spot: spotText, x: x, fd: fd, toGoal: toGoal,
+        red: !!s.isRedZone || (toGoal != null && toGoal <= 20),
+        last: last.length > 140 ? last.slice(0, 137) + '…' : last,
+        awayTO: s.awayTimeouts == null ? null : n(s.awayTimeouts), homeTO: s.homeTimeouts == null ? null : n(s.homeTimeouts),
+      };
+    } catch (e) { return null; }
+  }
+  /* the summary payload can hold it a few different ways */
+  function findSituation(j, comp) {
+    const c = [];
+    if (j && j.situation) c.push(j.situation);
+    if (comp && comp.situation) c.push(comp.situation);
+    const cur = j && j.drives && j.drives.current;
+    if (cur && Array.isArray(cur.plays) && cur.plays.length) {
+      const pl = cur.plays[cur.plays.length - 1], e = pl.end || pl.start || {};
+      c.push({ possession: (e.team && e.team.id) || (cur.team && cur.team.id), down: e.down, distance: e.distance, yardLine: e.yardLine, possessionText: e.possessionText,
+               downDistanceText: e.downDistanceText, shortDownDistanceText: e.shortDownDistanceText, lastPlay: { text: pl.text } });
+    }
+    return c;
+  }
+
   /* scoreboard event -> game (no players) */
   function normalizeEvent(ev, league) {
     league = cleanLeague(league);
@@ -188,6 +259,7 @@
     Object.assign(g, st);
     (comp.competitors || []).forEach(function (c) { g[c.homeAway] = teamBlock(c, league); });
     Teams.registerGame(g);
+    if (g.state === 'in' && comp.situation) { const sit = parseSituation(comp.situation, g, league); if (sit) g.sit = sit; }
     return g;
   }
 
@@ -258,6 +330,7 @@
     });
     if (g.away && g.home) g.name = g.away.abbr + ' @ ' + g.home.abbr;
     Teams.registerGame(g);
+    if (g.state === 'in') { const cands = findSituation(j, comp); for (let i = 0; i < cands.length && !g.sit; i++) { const sit = parseSituation(cands[i], g, league); if (sit) g.sit = sit; } }
 
     const idx = {};
     ((j.boxscore || {}).players || []).forEach(function (tb) {
@@ -496,7 +569,7 @@
   return {
     SPORT: SPORT, firstBasket: firstBasket,
     n: n, normName: normName, findPlayer: findPlayer, parseStatLine: parseStatLine,
-    normalizeEvent: normalizeEvent, normalizeSummary: normalizeSummary,
+    normalizeEvent: normalizeEvent, normalizeSummary: normalizeSummary, parseSituation: parseSituation,
     statValue: statValue, supportedStat: supportedStat, fantasyPoints: fantasyPoints,
     statLine: statLine, tdScorer: tdScorer, totalTds: totalTds,
   };

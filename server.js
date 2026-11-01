@@ -138,6 +138,8 @@ async function getGame(id, hint) {
       if (!g.clock && sb.clock && g.state === 'in') g.clock = sb.clock;
       if (!g.detail) g.detail = sb.detail;
       if (!g.date) g.date = sb.date;
+      if (g.state === 'in' && !g.sit && sb.sit && sb.state === 'in') g.sit = sb.sit;
+      if (g.state !== 'in') delete g.sit;
       ['away', 'home'].forEach(function (side) {
         if (g[side] && sb[side]) {
           if (!g[side].linescores.length) g[side].linescores = sb[side].linescores;
