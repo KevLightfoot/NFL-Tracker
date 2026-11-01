@@ -201,10 +201,10 @@ function pickGame(cands, leg) {
   })[0];
 }
 
-async function resolveLeg(leg, games) {
+async function resolveLeg(leg, games, lean) {
   const hint = isLeague(leg.league) ? leg.league : null;
-  let res = await resolveIn(leg, games, hint);
-  if (!res.gameId && hint) res = await resolveIn(leg, games, null, true);   // the league hint can be wrong — retry across every league, but only on exact names
+  let res = await resolveIn(leg, games, hint, false, lean);
+  if (!res.gameId && hint) res = await resolveIn(leg, games, null, true, lean);   // the league hint can be wrong — retry across every league, but only on exact names
   return res;
 }
 
@@ -231,22 +231,79 @@ async function resolveSlip(legs, games) {
     else out[leg.id] = await resolveLeg(leg, games);
   }
   const sib = []; const seen = new Set();
-  Object.keys(out).forEach(function (k) { const id = out[k].gameId; if (id && !seen.has(id)) { seen.add(id); const g = games.find(function (x) { return x.id === id; }); if (g) sib.push(g); } });
+  const addSib = function (id) { if (id && !seen.has(id)) { const g = games.find(function (x) { return x.id === id; }); if (g) { seen.add(id); sib.push(g); } } };
+  Object.keys(out).forEach(function (k) { addSib(out[k].gameId); });
+  // the league most of this slip's games are in: breaks ties between a pro player and his college namesake
+  const leanOf = function () { const c = {}; sib.forEach(function (g) { c[g.league] = (c[g.league] || 0) + 1; }); return Object.keys(c).sort(function (x, y) { return c[y] - c[x]; })[0] || null; };
   for (const leg of deferred) {
-    let hit = null;
+    let hit = null, hitPost = null;
     for (const g of sib) {
       const team = await playerTeamIn(g, leg.player).catch(function () { return null; });
-      if (team) { hit = { id: leg.id, gameId: g.id, team: team, league: g.league, via: 'slip' }; break; }
+      if (!team) continue;
+      const h = { id: leg.id, gameId: g.id, team: team, league: g.league, via: 'slip' };
+      if (g.state !== 'post') { hit = h; break; }
+      if (!hitPost) hitPost = h;
     }
-    out[leg.id] = hit || await resolveLeg(leg, games);
+    if (!hit && hitPost) {
+      // only a finished slip-mate game has him. If the slip still has open games, a live/upcoming game he is in is far likelier than a finished namesake.
+      const open = sib.some(function (g) { return g.state !== 'post'; });
+      if (open) {
+        const r = await resolveLeg(leg, games, leanOf());
+        const rg = r && r.gameId && games.find(function (x) { return x.id === r.gameId; });
+        hit = rg && rg.state !== 'post' ? r : hitPost;
+      } else hit = hitPost;
+    }
+    out[leg.id] = hit || await resolveLeg(leg, games, leanOf());
     // a leg placed by search tells the next ones where this slip is
-    const gid = out[leg.id] && out[leg.id].gameId;
-    if (gid && !seen.has(gid)) { const g = games.find(function (x) { return x.id === gid; }); if (g) { seen.add(gid); sib.push(g); } }
+    addSib(out[leg.id] && out[leg.id].gameId);
   }
   return legs.map(function (l) { return out[l.id]; });
 }
 
-async function resolveIn(leg, games, hint, strict) {
+/* Which game is a prop in when the slip shows no team or matchup? The same name often exists in the pros and in college (Derrick Henry, Lamar Jackson,
+   Michael Wilson), so the games are searched in tiers, nearest to "now" first, and the best hit in the first tier that has one wins:
+     0. games on the date printed on the slip (if any)
+     1. games in progress, starting within 36 hours, or that ended within the last 18 hours
+     2. everything else this week, closest to now first (upcoming before finished)
+   Inside a tier: the league most of the slip is in, then pro football, then college, then the game closest to now. */
+async function findPlayerGame(leg, games, hint, lean) {
+  const now = Date.now();
+  const when = function (g) { const t = Date.parse(g.date); return isNaN(t) ? null : t; };
+  let pool = games.filter(function (g) { return g.thisWeek; });
+  if (hint && hint !== 'nfl' && hint !== 'cfb') pool = pool.filter(function (g) { return g.league === hint; });
+  else if (hint) pool = pool.filter(function (g) { return g.league === 'nfl' || g.league === 'cfb'; });   // the model's nfl/cfb label is often wrong, so both are searched
+  const dist = function (g) { const t = when(g); if (t == null) return 9e12; const d = t - now; return d < 0 ? -d * 1.5 : d; };
+  const check = async function (g) { const team = await playerTeamIn(g, leg.player); return team ? { game: g, team: team } : null; };
+  const scan = async function (list, firstBatchOnly) {
+    const hits = [];
+    for (let i = 0; i < list.length; i += 8) {
+      const found = await Promise.all(list.slice(i, i + 8).map(function (g) { return check(g).catch(function () { return null; }); }));
+      found.forEach(function (h) { if (h) hits.push(h); });
+      if (firstBatchOnly && hits.length) break;
+    }
+    return hits;
+  };
+  const rank = function (a, b) {
+    const lg = function (h) { return h.game.league === lean ? 0 : h.game.league === 'nfl' ? 1 : h.game.league === 'cfb' ? 2 : 3; };
+    return lg(a) - lg(b) || (a.game.state === 'in' ? 0 : 1) - (b.game.state === 'in' ? 0 : 1) || dist(a.game) - dist(b.game);
+  };
+  const tiers = [];
+  if (leg.game_date) {
+    const want = String(leg.game_date).slice(0, 10);
+    tiers.push(pool.filter(function (g) { const t = when(g); return t != null && [0, 4, 5, 6, 7, 8].some(function (h) { return new Date(t - h * 3600 * 1000).toISOString().slice(0, 10) === want; }); }));
+  }
+  const near = function (g) { const t = when(g); return g.state === 'in' || (g.state === 'pre' && t != null && t - now < 36 * 36e5) || (g.state === 'post' && t != null && now - t < 18 * 36e5); };
+  tiers.push(pool.filter(near).sort(function (a, b) { return dist(a) - dist(b); }).slice(0, 120));
+  tiers.push(pool.filter(function (g) { return !near(g); }).sort(function (a, b) { return dist(a) - dist(b); }).slice(0, 160));
+  for (let i = 0; i < tiers.length; i++) {
+    if (!tiers[i].length) continue;
+    const hits = await scan(tiers[i], i === tiers.length - 1);
+    if (hits.length) return hits.sort(rank)[0];
+  }
+  return null;
+}
+
+async function resolveIn(leg, games, hint, strict, lean) {
   const pool = hint ? games.filter(function (g) { return g.league === hint; }) : games;
   // does this name refer to one of the two teams in game g? (matching is done in the game's own league)
   const refers = function (name, g) { const a = name ? Teams.matchTeam(name, g.league, strict) : null; return !!a && (a === g.away.abbr || a === g.home.abbr); };
@@ -259,30 +316,7 @@ async function resolveIn(leg, games, hint, strict) {
   let team = game && leg.team ? (Teams.matchTeam(leg.team, game.league, strict) || null) : null;
 
   if (!game && leg.player) {
-    // Find the player when the slip shows no matchup: box scores of live/final games, rosters of upcoming ones.
-    // College has ~60 games a week, so only the current week is scanned, a few games at a time.
-    const check = async function (g) {
-      const team = await playerTeamIn(g, leg.player);
-      return team ? { game: g, team: team } : null;
-    };
-    const scan = async function (list) {
-      const order = list.filter(function (g) { return g.thisWeek; }).slice(0, 160);
-      for (let i = 0; i < order.length; i += 8) {
-        const found = await Promise.all(order.slice(i, i + 8).map(function (g) { return check(g).catch(function () { return null; }); }));
-        const hitOne = found.find(Boolean);
-        if (hitOne) return hitOne;
-      }
-      return null;
-    };
-    let hit = null;
-    if (hint === 'cfb') {
-      // Football names repeat across the pros and college (Jalen Coker, Josh Jacobs, Tetairoa McMillan all have a college namesake), and a
-      // slip that has a college leg makes the model call every leg "cfb". A pro game that is live or about to start beats a college namesake days away.
-      const soon = function (g) { return g.state !== 'pre' || (Date.parse(g.date) - Date.now()) < 30 * 36e5; };
-      const pro = await scan(games.filter(function (g) { return g.league === 'nfl'; }));
-      if (pro && soon(pro.game)) hit = pro;
-      else { const col = await scan(pool); hit = col || pro; }
-    } else hit = await scan(pool);
+    const hit = await findPlayerGame(leg, games, hint, lean);
     if (hit) { game = hit.game; team = hit.team; }
   }
   if (game && !team && leg.player && game.state !== 'pre') {
@@ -385,6 +419,8 @@ function systemPrompt() {
     '- If the screenshot shows several SEPARATE bets (e.g. an "Open Bets" list), put the first in the top-level fields and every other one in additional_bets. Legs of one parlay always stay together in one bet.',
     '- Totals: when a game total shows the matchup ("Raiders @ Browns" or "LV vs CLE"), fill away_team and home_team. Alternate spreads / alternate totals are ordinary spread / total legs with their own line.',
     '- DraftKings Predictions / "Pick Combo" and trade slips print each leg with the THRESHOLD as a big heading ("30+", "2+", "1+"), then the matchup, then "Player Stat" (e.g. "Jalen Coker Receiving Yards"). The heading is the line: raw_text = "30+ Jalen Coker Receiving Yards", side over, line 29.5. A heading with the player and stat below it is ONE leg, never two. Never leave the line empty on a prop; if a number is printed anywhere in the leg, it is the line.',
+    '- Ticket-list / open-bets rows from offshore and book sites (a ticket id like "G14556079", a red amount, then another amount, and legs written "Football - Cleveland Browns vs Pittsburgh Steelers / Game / total player touchdowns / Jaylen Warren Over 0.5 +114"): the RED amount is the RISK (wager) and the amount after it is what it pays TO WIN (profit, put it in to_win and leave payout null). The names before "/ Game" are the matchup, away team first: away_team and home_team on that leg. The last number on the leg (+114, -126) is that leg\'s odds. Each ticket id is its own bet; one ticket can list several legs (a parlay). Never mix up the two money columns, even when the column headers are cut off.',
+    '- "total player touchdowns" with "Over 0.5" is an anytime touchdown: market anytime_td, side yes, line null (raw_text keeps the printed text). "Over 1.5 total player touchdowns" is player_prop, stat total_tds, side over, line 1.5.',
     '- If a field is not on the slip use null. Put anything uncertain in warnings.',
   ].join('\n');
 }
@@ -469,6 +505,8 @@ function readBody(req, limit) {
   });
 }
 
+// One slip image is one paid model call. 12 an hour was too low once a few people shared a wifi network (and a retry counts as a call), so the default is 80.
+const PARSE_PER_HOUR = Math.max(5, parseInt(process.env.PARSE_PER_HOUR, 10) || 80);
 // Lightweight in-memory limits to reduce accidental/public API abuse. These reset on restart.
 const rateBuckets = new Map();
 function rateLimit(req, res, key, max, windowMs) {
@@ -480,19 +518,24 @@ function rateLimit(req, res, key, max, windowMs) {
   if (!b || now >= b.reset) b = { count: 0, reset: now + windowMs };
   b.count += 1; rateBuckets.set(id, b);
   if (b.count > max) {
-    res.setHeader('retry-after', String(Math.max(1, Math.ceil((b.reset - now) / 1000))));
-    send(res, 429, { error: 'Too many requests. Please wait a bit and try again.' });
+    const secs = Math.max(1, Math.ceil((b.reset - now) / 1000));
+    res.setHeader('retry-after', String(secs));
+    log('rate_limited', { key: key, max: max, count: b.count, retry_s: secs });
+    const what = key === 'parse' ? 'You have uploaded a lot of slips in the last hour. ' : 'Too many requests. ';
+    send(res, 429, { error: what + 'Try again in about ' + Math.max(1, Math.ceil(secs / 60)) + ' min.' });
     return false;
   }
   return true;
 }
+// forget finished windows so the map cannot grow forever
+setInterval(function () { const now = Date.now(); rateBuckets.forEach(function (b, k) { if (now >= b.reset) rateBuckets.delete(k); }); }, 10 * 60 * 1000).unref();
 
 /* Push notifications (needs SUPABASE_URL, SUPABASE_SERVICE_KEY, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY on the server; otherwise inert). */
 const notifier = Notify.create({ env: process.env, getGames: getGames, getGame: getGame, E: Evaluate });
 
 async function handleApi(req, res, url) {
   const p = url.pathname;
-  if (p === '/api/parse' && req.method === 'POST' && !rateLimit(req, res, 'parse', 12, 60 * 60 * 1000)) return;
+  if (p === '/api/parse' && req.method === 'POST' && !rateLimit(req, res, 'parse', PARSE_PER_HOUR, 60 * 60 * 1000)) return;
   if (p === '/api/resolve' && req.method === 'POST' && !rateLimit(req, res, 'resolve', 120, 60 * 60 * 1000)) return;
   if (p === '/api/config' && req.method === 'GET') return send(res, 200, { hasServerKey: !!process.env.OPENAI_API_KEY, model: MODEL, vapidPublicKey: notifier.publicKey });
   if (p === '/api/cron/check' && req.method === 'GET') {

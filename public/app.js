@@ -302,6 +302,7 @@
   /* Odds come from the money (wager → payout), not from the model's reading of the slip; a value you typed yourself is kept. */
   function applyOdds(p) {
     if (p.oddsUser === true) return false;
+    if (p.printedOdds && !p.credit && E.printedOddsAgree(p.printedOdds, p.wager, p.payout)) { const q = String(p.printedOdds).replace(/\s+/g, '').replace('\u2212', '-'); if (p.odds === q) return false; p.odds = q; return true; }
     const o = E.oddsFromMoney(p.wager, p.payout);
     if (!o || p.odds === o) return false;
     p.odds = o; return true;
@@ -314,7 +315,7 @@
     if (payout == null && wager != null && toWin != null) payout = Math.round((wager + toWin) * 100) / 100;
     const p = {
       id: uid(), createdAt: Date.now(), name: '', sportsbook: bet.sportsbook || '', betType: bet.bet_type || 'parlay', credit: false,
-      wager: wager, payout: payout, odds: bet.total_odds || '', slipStatus: bet.slip_status || '', warnings: bet.warnings || [],
+      wager: wager, payout: payout, odds: bet.total_odds || '', printedOdds: bet.total_odds || (bet.legs && bet.legs.length === 1 && bet.legs[0].odds) || '', slipStatus: bet.slip_status || '', warnings: bet.warnings || [],
       thumb: thumb || null, legs: (bet.legs || []).map(normLeg),
     };
     applyOdds(p);
@@ -575,7 +576,7 @@
     });
   }
 
-  const RESOLVER_V = 2;   // bump to make every prop with no matchup on its slip get placed again
+  const RESOLVER_V = 3;   // bump to make every prop with no matchup on its slip get placed again
 
   /* ---------------- refresh loop ---------------- */
   async function refreshAll() {
@@ -586,7 +587,7 @@
       const need = [], slipOf = {};
       // Props placed by the old resolver may sit in a college game with the same player name; place those once more.
       S.parlays.forEach(function (p) { if (p.demo) return; p.legs.forEach(function (l) {
-        if (l.player && l.gameId && !l.pinned && !l.team && !l.away_team && !l.home_team && (l.rv || 0) < RESOLVER_V) { l.gameId = null; l.teamResolved = null; }
+        if (l.player && l.gameId && !l.pinned && !l.team && !l.away_team && !l.home_team && (l.rv || 0) < RESOLVER_V && Date.now() - (p.createdAt || 0) < 3 * 864e5) { l.gameId = null; l.teamResolved = null; }
       }); });
       S.parlays.forEach(function (p) { p.legs.forEach(function (l) { E.applyLadder(l, false); if (!l.gameId && !l.noResolve && l.market !== 'other') { need.push(l); slipOf[l.id] = p.id; } }); });
       if (need.length) {

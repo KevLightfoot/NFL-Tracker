@@ -200,6 +200,16 @@
     return '-' + Math.round(100 / (dec - 1));
   }
 
+  /* Odds printed on the slip win when the money agrees with them: a ticket that rounds "to win" to whole dollars ($25 to win $28 at +114)
+     works out to +112 from the money alone. They are used only if the two are within 6% of each other, so a misread slip still gets the money's odds. */
+  function printedOddsAgree(printed, wager, payout) {
+    const m = String(printed == null ? '' : printed).match(/^\s*([+\-\u2212])\s*(\d{2,5})\s*$/);
+    const w = Number(wager), pay = Number(payout);
+    if (!m || !isFinite(w) || !isFinite(pay) || w <= 0 || pay <= w) return false;
+    const n = +m[2], dp = m[1] === '+' ? 1 + n / 100 : 1 + 100 / n, dm = pay / w;
+    return Math.abs(dm - dp) / dp <= 0.06;
+  }
+
   /* A leg with no line must never be graded against 0 (everything "clears" 0). */
   function hasLine(leg) { return leg.line != null && leg.line !== '' && isFinite(Number(leg.line)) && (Number(leg.line) !== 0 || leg.market === 'spread'); }
   function noLine(r) { r.kind = r.kind || 'bar'; r.state = 'unresolved'; r.detail = 'The line is missing on this leg — tap Edit bet to enter it'; return r; }
@@ -450,5 +460,5 @@
     return { counts: c, total: total, hits: c.hit, status: status, alive: c.miss === 0 };
   }
 
-  return { evaluateLeg: evaluateLeg, oddsFromMoney: oddsFromMoney, applyLadder: applyLadder, hasLine: hasLine, describeLeg: describeLeg, summarize: summarize, autoName: autoName, shortPlayer: shortPlayer, scopedScore: scopedScore, STAT_LABEL: STAT_LABEL, STAT_GROUPS: STAT_GROUPS, fmt: fmt, gameStatusText: gameStatusText };
+  return { evaluateLeg: evaluateLeg, oddsFromMoney: oddsFromMoney, printedOddsAgree: printedOddsAgree, applyLadder: applyLadder, hasLine: hasLine, describeLeg: describeLeg, summarize: summarize, autoName: autoName, shortPlayer: shortPlayer, scopedScore: scopedScore, STAT_LABEL: STAT_LABEL, STAT_GROUPS: STAT_GROUPS, fmt: fmt, gameStatusText: gameStatusText };
 });
