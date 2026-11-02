@@ -247,7 +247,7 @@
     const x = typeof v === 'number' ? v : parseFloat(String(v).replace(/[^0-9.\-]/g, ''));
     return isFinite(x) ? x : null;
   };
-  const LEAGUE_NAMES = { nfl: 'NFL', cfb: 'College football', nba: 'NBA', mlb: 'MLB' };
+  const LEAGUE_NAMES = { nfl: 'NFL', cfb: 'College football', nba: 'NBA', cbb: 'College basketball', mlb: 'MLB' };
   const BET_LABEL = { parlay: 'Parlay', same_game_parlay: 'Same Game Parlay', single: 'Single', round_robin: 'Round Robin', teaser: 'Teaser', other: 'Bet' };
 
   /* Underdog/PrizePicks-style wording ("Higher 0.5 Anytime TD") often comes back as a generic prop with an

@@ -296,7 +296,7 @@ test('the edit dialog lists every stat once, grouped by sport, and every label e
   Object.keys(E.STAT_LABEL).forEach(function (k) { assert.ok(all.indexOf(k) >= 0, k + ' is missing from the dropdown'); });
   const { TOOL } = require('../server.js');
   const props = TOOL.input_schema.properties.legs.items.properties;
-  assert.deepStrictEqual(props.league.enum, ['nfl', 'cfb', 'nba', 'mlb', null]);
+  assert.deepStrictEqual(props.league.enum, ['nfl', 'cfb', 'nba', 'mlb', 'cbb', null]);
   assert.ok(props.market.enum.indexOf('first_basket') >= 0); ['f5', 'i1'].forEach(function (p) { assert.ok(props.period.enum.indexOf(p) >= 0, p); });
   props.stat.enum.forEach(function (k) { if (k) assert.ok(E.STAT_LABEL[k], 'schema stat has a label: ' + k); });
   all.forEach(function (k) { if (k !== 'other') assert.ok(props.stat.enum.indexOf(k) >= 0, 'schema offers ' + k); });

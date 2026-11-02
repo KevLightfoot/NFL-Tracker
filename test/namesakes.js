@@ -75,10 +75,15 @@ test('lean: with college slip-mates already placed, the college namesake wins th
   const r2 = await run(null, function () { return server.resolveLeg(prop('a', 'Lamar Jackson'), g0, 'nfl'); });
   assert.strictEqual(r2.gameId, 'n1'); global.fetch = realFetch;
 });
-test('the date printed on the slip picks the game: yesterday\'s date -> yesterday\'s college game', async function () {
+test('the date printed on the slip picks the game: an earlier date -> that day\'s college game', async function () {
   const d = function (h) { return new Date(now + h * H).toISOString().slice(0, 10); };
-  const out = await run(null, function () { return server.resolveSlip([prop('a', 'Derrick Henry', { game_date: d(-20) })], games); });
-  assert.strictEqual(out[0].gameId, 'c1');
+  // (two days back, so the date never coincides with today's live games whatever time of day the test runs)
+  const c1 = games.find(function (g) { return g.id === 'c1'; }), was = c1.date;
+  c1.date = iso(-50);
+  try {
+    const out = await run(null, function () { return server.resolveSlip([prop('a', 'Derrick Henry', { game_date: d(-50) })], games); });
+    assert.strictEqual(out[0].gameId, 'c1');
+  } finally { c1.date = was; }
 });
 const Teams = require('../public/lib/teams.js');
 [['FAU', 'Florida Atlantic Owls', 'Florida Atlantic', 'Owls'], ['UNT', 'North Texas Mean Green', 'North Texas', 'Mean Green']].forEach(function (t) { Teams.registerTeam('cfb', { abbr: t[0], name: t[1], short: t[2], nick: t[3], location: t[2] }); });

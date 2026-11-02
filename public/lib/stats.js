@@ -87,12 +87,12 @@
   }
 
   /* ---------- ESPN parsing ---------- */
-  const LEAGUES = ['nfl', 'cfb', 'nba', 'mlb'];
-  const SPORT = { nfl: 'football', cfb: 'football', nba: 'basketball', mlb: 'baseball' };
+  const LEAGUES = ['nfl', 'cfb', 'nba', 'mlb', 'cbb'];
+  const SPORT = { nfl: 'football', cfb: 'football', nba: 'basketball', mlb: 'baseball', cbb: 'basketball' };
   function cleanLeague(l) { return LEAGUES.indexOf(l) >= 0 ? l : 'nfl'; }
   // Pro abbreviations are normalised to our tables (WAS->WSH, GSW->GS); college abbreviations are used exactly as ESPN sends them.
   function canonAbbr(a, league) {
-    if (league === 'cfb') return a || '';
+    if (league === 'cfb' || league === 'cbb') return a || '';
     if (league === 'nba' || league === 'mlb') return Teams.matchTeam(a, league, true) || a || '';
     return Teams.matchTeam(a, 'nfl') || a || '';
   }

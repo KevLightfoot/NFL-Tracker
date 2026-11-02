@@ -32,11 +32,11 @@ const MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || 'https://kevlightfoot.github.io';
 const ESPN_BASE = 'https://site.api.espn.com/apis/site/v2/sports';
 const ESPN_ALT_BASE = 'https://site.web.api.espn.com/apis/site/v2/sports';
-const LEAGUES = { nfl: { sport: 'football', path: 'nfl' }, cfb: { sport: 'football', path: 'college-football' }, nba: { sport: 'basketball', path: 'nba' }, mlb: { sport: 'baseball', path: 'mlb' } };
+const LEAGUES = { nfl: { sport: 'football', path: 'nfl' }, cfb: { sport: 'football', path: 'college-football' }, nba: { sport: 'basketball', path: 'nba' }, mlb: { sport: 'baseball', path: 'mlb' }, cbb: { sport: 'basketball', path: 'mens-college-basketball' } };
 const LEAGUE_IDS = Object.keys(LEAGUES);
 const isLeague = function (x) { return typeof x === 'string' && Object.prototype.hasOwnProperty.call(LEAGUES, x); };
 const leagueUrl = function (base, lg) { return base + '/' + LEAGUES[lg].sport + '/' + LEAGUES[lg].path; };
-const DAILY = { nba: true, mlb: true };     // leagues that play every day: "this week" means roughly yesterday to day after tomorrow
+const DAILY = { nba: true, mlb: true, cbb: true };     // leagues that play every day: "this week" means roughly yesterday to day after tomorrow
 // ESPN college scoreboards only list every game when a conference group is given: 80 = FBS, 81 = FCS (set CFB_GROUPS=80,81 to include FCS).
 const CFB_GROUPS = (process.env.CFB_GROUPS || '80').split(',').map(function (x) { return x.trim(); }).filter(Boolean);
 const PUBLIC = path.join(__dirname, 'public');
@@ -77,6 +77,8 @@ async function getGames() {
     [['nba', -2, 3], ['mlb', -2, 3]].forEach(function (x) {
       for (let off = x[1]; off <= x[2]; off++) jobs.push({ league: x[0], week: false, url: leagueUrl(ESPN_BASE, x[0]) + '/scoreboard?dates=' + day(off) });
     });
+    // men's college basketball: one day at a time too, and only group 50 (all of Division I) lists every game, not just the featured ones
+    for (let off = -2; off <= 3; off++) jobs.push({ league: 'cbb', week: false, url: leagueUrl(ESPN_BASE, 'cbb') + '/scoreboard?dates=' + day(off) + '&groups=50&limit=400' });
     CFB_GROUPS.forEach(function (grp) {
       jobs.push({ league: 'cfb', week: true, url: leagueUrl(ESPN_BASE, 'cfb') + '/scoreboard?groups=' + grp + '&limit=400' });
       jobs.push({ league: 'cfb', week: false, url: leagueUrl(ESPN_BASE, 'cfb') + '/scoreboard?dates=' + range + '&groups=' + grp + '&limit=600' });
@@ -176,6 +178,33 @@ const legBrief = function (l) {
 };
 
 /* ---------------- leg -> game resolution ---------------- */
+/* What sport a leg is, from what it bets on (not the model's league label, which can be wrong): a points prop or a 145.5 total is basketball,
+   a TD scorer or a 47.5 total is football. null when the leg itself doesn't say. */
+const HOOPS_STATS = new Set(['points', 'rebounds', 'assists', 'three_pointers_made', 'three_pointers_attempted', 'field_goals_made', 'field_goals_attempted', 'free_throws_made',
+  'free_throws_attempted', 'steals', 'blocks', 'turnovers', 'steals_blocks', 'pts_reb', 'pts_ast', 'reb_ast', 'pts_reb_ast', 'offensive_rebounds', 'defensive_rebounds',
+  'personal_fouls', 'minutes', 'double_double', 'triple_double']);
+const BASE_STATS = new Set(['hits', 'runs', 'rbis', 'home_runs', 'walks', 'batter_strikeouts', 'at_bats', 'hits_runs_rbis', 'singles', 'doubles', 'triples', 'total_bases',
+  'stolen_bases', 'pitcher_strikeouts', 'pitching_outs', 'earned_runs', 'hits_allowed', 'walks_allowed', 'runs_allowed', 'pitches_thrown']);
+function legSport(leg) {
+  if (!leg) return null;
+  const m = leg.market, st = leg.stat, line = Math.abs(Number(leg.line));
+  if (m === 'anytime_td' || m === 'first_td' || m === 'last_td') return 'football';
+  if (m === 'first_basket') return 'basketball';
+  if (m === 'player_prop' && st && st !== 'other' && st !== 'fantasy_points') return HOOPS_STATS.has(st) ? 'basketball' : BASE_STATS.has(st) ? 'baseball' : 'football';
+  if (leg.line != null && isFinite(line) && line > 0) {
+    if (m === 'total') return line >= 100 ? 'basketball' : line < 20 ? 'baseball' : 'football';
+    if (m === 'team_total') return line >= 50 ? 'basketball' : line < 9 ? 'baseball' : 'football';
+  }
+  return null;
+}
+/* The leagues worth searching for a leg: its league label when that fits the sport the leg is, otherwise every league of that sport. */
+function leaguesForLeg(leg, hint) {
+  const sp = legSport(leg);
+  if (hint && (!sp || LEAGUES[hint].sport === sp)) return [hint];
+  if (sp) return LEAGUE_IDS.filter(function (l) { return LEAGUES[l].sport === sp; });
+  return null;    // anything
+}
+
 function pickGame(cands, leg) {
   if (!cands.length) return null;
   if (cands.length === 1) return cands[0];
@@ -270,8 +299,10 @@ async function findPlayerGame(leg, games, hint, lean) {
   const now = Date.now();
   const when = function (g) { const t = Date.parse(g.date); return isNaN(t) ? null : t; };
   let pool = games.filter(function (g) { return g.thisWeek; });
-  if (hint && hint !== 'nfl' && hint !== 'cfb') pool = pool.filter(function (g) { return g.league === hint; });
-  else if (hint) pool = pool.filter(function (g) { return g.league === 'nfl' || g.league === 'cfb'; });   // the model's nfl/cfb label is often wrong, so both are searched
+  const sp = legSport(leg) || (hint ? LEAGUES[hint].sport : null);
+  // the model's pro/college label is often wrong (a pro prop on a slip with college legs gets "cfb"), so every league of the sport is searched;
+  // baseball is MLB only. Without any clue, everything is searched.
+  if (sp) pool = pool.filter(function (g) { return LEAGUES[g.league].sport === sp; });
   const dist = function (g) { const t = when(g); if (t == null) return 9e12; const d = t - now; return d < 0 ? -d * 1.5 : d; };
   const check = async function (g) { const team = await playerTeamIn(g, leg.player); return team ? { game: g, team: team } : null; };
   const scan = async function (list, firstBatchOnly) {
@@ -284,7 +315,8 @@ async function findPlayerGame(leg, games, hint, lean) {
     return hits;
   };
   const rank = function (a, b) {
-    const lg = function (h) { return h.game.league === lean ? 0 : h.game.league === 'nfl' ? 1 : h.game.league === 'cfb' ? 2 : 3; };
+    const ORDER = { nfl: 1, nba: 1, mlb: 1, cfb: 2, cbb: 2 };   // pros before college when the same name is in both
+    const lg = function (h) { return h.game.league === lean ? 0 : (ORDER[h.game.league] || 3); };
     return lg(a) - lg(b) || (a.game.state === 'in' ? 0 : 1) - (b.game.state === 'in' ? 0 : 1) || dist(a.game) - dist(b.game);
   };
   const tiers = [];
@@ -293,7 +325,7 @@ async function findPlayerGame(leg, games, hint, lean) {
     tiers.push(pool.filter(function (g) { const t = when(g); return t != null && [0, 4, 5, 6, 7, 8].some(function (h) { return new Date(t - h * 3600 * 1000).toISOString().slice(0, 10) === want; }); }));
   }
   const near = function (g) { const t = when(g); return g.state === 'in' || (g.state === 'pre' && t != null && t - now < 36 * 36e5) || (g.state === 'post' && t != null && now - t < 18 * 36e5); };
-  tiers.push(pool.filter(near).sort(function (a, b) { return dist(a) - dist(b); }).slice(0, 120));
+  tiers.push(pool.filter(near).sort(function (a, b) { return dist(a) - dist(b); }).slice(0, 200));
   tiers.push(pool.filter(function (g) { return !near(g); }).sort(function (a, b) { return dist(a) - dist(b); }).slice(0, 160));
   for (let i = 0; i < tiers.length; i++) {
     if (!tiers[i].length) continue;
@@ -304,7 +336,9 @@ async function findPlayerGame(leg, games, hint, lean) {
 }
 
 async function resolveIn(leg, games, hint, strict, lean) {
-  const pool = hint ? games.filter(function (g) { return g.league === hint; }) : games;
+  const lgs = leaguesForLeg(leg, hint);
+  if (hint && lgs && lgs.indexOf(hint) < 0) hint = null;   // e.g. labelled cfb but it is a 141.5 total: that's basketball
+  const pool = lgs ? games.filter(function (g) { return lgs.indexOf(g.league) >= 0; }) : games;
   // does this name refer to one of the two teams in game g? (matching is done in the game's own league)
   const refers = function (name, g) { const a = name ? Teams.matchTeam(name, g.league, strict) : null; return !!a && (a === g.away.abbr || a === g.home.abbr); };
   const matchup = [leg.away_team, leg.home_team].filter(Boolean);
@@ -371,7 +405,7 @@ const TOOL = {
             side: { type: ['string', 'null'], enum: ['over', 'under', 'yes', null] },
             line: Object.assign({ description: 'Spread / run line: signed number for the team bet on (+7.5, -3, -1.5). Total/prop: the number. For "N+" ladder lines use over with line N-0.5.' }, NUM_OR_NULL),
             odds: Object.assign({ description: 'American odds for this leg if shown.' }, STR_OR_NULL),
-            league: { type: ['string', 'null'], enum: ['nfl', 'cfb', 'nba', 'mlb', null], description: 'nfl = pro football. cfb = college football (NCAAF): college teams like Georgia, Ohio State, Notre Dame, rankings like "#5", or NCAAF/CFB labels. nba = pro basketball (Lakers, Celtics, ...). mlb = pro baseball (Yankees, Dodgers, ...). null if you cannot tell or the sport is not one of these. A slip usually stays in one league unless it is a mixed-sport parlay: if the other legs are clearly college, mark ambiguous ones (e.g. "S Carolina", "Texas") cfb too.' },
+            league: { type: ['string', 'null'], enum: ['nfl', 'cfb', 'nba', 'mlb', 'cbb', null], description: 'nfl = pro football. cfb = college football (NCAAF): college teams like Georgia, Ohio State, Notre Dame, rankings like "#5", or NCAAF/CFB labels. nba = pro basketball (Lakers, Celtics, ...). cbb = men\'s college basketball (NCAAB / NCAAM / CBB): college teams (Duke, Kansas, Gonzaga, UConn) in a basketball bet: game totals around 120-170, points/rebounds/assists props, "1st Half" markets, NCAAB labels. mlb = pro baseball (Yankees, Dodgers, ...). null if you cannot tell or the sport is not one of these. A slip usually stays in one league unless it is a mixed-sport parlay: if the other legs are clearly college, mark ambiguous ones (e.g. "S Carolina", "Texas") with that same college league (cfb for football, cbb for basketball).' },
             away_team: Object.assign({ description: 'Away team of the game this leg is in, if the matchup is shown.' }, STR_OR_NULL),
             home_team: Object.assign({ description: 'Home team of the game this leg is in, if the matchup is shown.' }, STR_OR_NULL),
             game_date: Object.assign({ description: 'ISO date (YYYY-MM-DD) of the game if the slip shows a date or day, else null.' }, STR_OR_NULL),
@@ -404,6 +438,7 @@ function systemPrompt() {
     'Rules:',
     '- Extract EVERY leg. Never invent legs. If the slip states a leg count (e.g. "5 Leg Parlay") make sure you return that many; otherwise add a warning.',
     '- Set league on every leg: "cfb" for college football (college teams such as Georgia, Ohio State, Alabama; rankings like #5; NCAAF/CFB labels), "nfl" for pro football, "nba" for NBA basketball, "mlb" for MLB baseball. A slip can mix leagues. Use team names exactly as printed, without the ranking number. Sports we cannot track (NHL, college basketball, soccer, tennis, UFC, ...): still return the leg with league null and market "other", and add a warning.',
+    '- College basketball (cbb) vs college football (cfb): the same schools play both (Duke, Texas, Kansas, Michigan). Decide by the bet itself: a total in the 100s, points / rebounds / assists / threes props or an NCAAB label is cbb; a total in the 30s-70s, TDs or yards is cfb. College basketball has two halves: "1st Half" = period 1h, "2nd Half" = 2h; there are no quarters.',
     '- Same-game parlays / bet builders: list each selection as its own leg, with the matchup on every leg.',
     '- Markets: moneyline; spread (point spread, or MLB run line — the line is signed for the team bet on); total = game over/under (points, or runs in baseball); team_total = one team\'s points/runs over/under; player_prop for every player stat; anytime_td / first_td / last_td for football scorer markets; first_basket for NBA "First Basket / First Field Goal" (player, side yes); period = 1h/2h/q1..q4 for half or quarter markets (football and basketball). Baseball: "First 5 Innings" / "1st 5" = period f5 (also f3, f7); "1st Inning" markets = period i1, and "Run in the 1st Inning" / YRFI = total over 0.5 with period i1, NRFI = total under 0.5 with period i1 (fill away_team and home_team if shown). Use "other" only when nothing fits and explain in notes.',
     '- Football player props: passing / rushing / receiving yards, TDs, receptions, kicking, defense, combined stats, fantasy points.',

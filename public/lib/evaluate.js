@@ -53,7 +53,9 @@
     runs_allowed: 'R', pitches_thrown: 'pitches',
   };
   const PERIOD_LABEL = { full: '', '1h': '1H ', '2h': '2H ', q1: '1Q ', q2: '2Q ', q3: '3Q ', q4: '4Q ', f3: 'F3 ', f5: 'F5 ', f7: 'F7 ', i1: '1st Inning ' };
-  const SPORT = { nfl: 'football', cfb: 'football', nba: 'basketball', mlb: 'baseball' };
+  const SPORT = { nfl: 'football', cfb: 'football', nba: 'basketball', mlb: 'baseball', cbb: 'basketball' };
+  /* men's college basketball plays two 20-minute halves, not four quarters */
+  const halvesOnly = function (g) { return !!g && g.league === 'cbb'; };
   const sportOf = function (g) { return (g && SPORT[g.league]) || 'football'; };
 
   function fmt(x) {
@@ -118,6 +120,11 @@
     if (g.state !== 'in') return 0;
     if (sportOf(g) === 'baseball') return inningsDone(g);
     const detail = String(g.detail || ''), period = g.period || 0;
+    if (halvesOnly(g)) {
+      if (/halftime/i.test(detail)) return Math.max(1, period);
+      const z = /^0?:00(\.\d+)?$/.test(String(g.clock || '').trim()) || /end of/i.test(detail);
+      return z ? period : Math.max(0, period - 1);
+    }
     if (/half/i.test(detail)) return Math.max(2, period);
     const zero = /^0?:00(\.\d+)?$/.test(String(g.clock || '').trim()) || /end of/i.test(detail);
     return zero ? period : Math.max(0, period - 1);
@@ -134,12 +141,13 @@
       const inn = /^end/i.test(d) ? p : /^mid/i.test(d) ? p - 0.5 : /^bot/i.test(d) ? p - 0.25 : p - 0.75;
       return Math.min(1, Math.max(0, inn / 9));
     }
-    if (/half/i.test(String(g.detail || ''))) return 0.5;
-    if (p > 4) return 1;
-    const secs = sp === 'basketball' ? 720 : 900;
+    if (/halftime/i.test(String(g.detail || '')) || (!halvesOnly(g) && /half/i.test(String(g.detail || '')))) return 0.5;
+    const regs = halvesOnly(g) ? 2 : 4;
+    if (p > regs) return 1;
+    const secs = halvesOnly(g) ? 1200 : sp === 'basketball' ? 720 : 900;
     const m = String(g.clock || '').match(/^(\d+):(\d{2})/);
     const left = m ? (+m[1]) * 60 + (+m[2]) : secs;
-    return Math.min(1, Math.max(0, ((p - 1) * secs + (secs - left)) / (secs * 4)));
+    return Math.min(1, Math.max(0, ((p - 1) * secs + (secs - left)) / (secs * regs)));
   }
 
   function scopedScore(g, scope) {
@@ -152,6 +160,10 @@
       return { away: sum(a), home: sum(h), final: done >= N, started: g.state !== 'pre' };
     }
     if (scope === 'full') return { away: a.score, home: h.score, final: post, started: g.state !== 'pre' };
+    if (halvesOnly(g) && (scope === '1h' || scope === '2h')) {
+      if (scope === '1h') return { away: ls(a, 0), home: ls(h, 0), final: done >= 1, started: g.state !== 'pre' };
+      return { away: a.score - ls(a, 0), home: h.score - ls(h, 0), final: post, started: post || done >= 1 || period >= 2 };   // 2nd half includes OT, like the books grade it
+    }
     if (scope === '1h') return { away: ls(a, 0) + ls(a, 1), home: ls(h, 0) + ls(h, 1), final: done >= 2, started: g.state !== 'pre' };
     if (scope === '2h') {
       return { away: a.score - (ls(a, 0) + ls(a, 1)), home: h.score - (ls(h, 0) + ls(h, 1)), final: post, started: post || done >= 2 || period >= 3 };

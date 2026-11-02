@@ -136,8 +136,9 @@
   }
 
   function makeRegistry() { return { EXACT: Object.create(null), PRI: Object.create(null), LONG: [], dirty: false, INFO: Object.create(null), SEEN: Object.create(null), BLOCK: Object.create(null) }; }
-  const REG = { nfl: makeRegistry(), cfb: makeRegistry(), nba: makeRegistry(), mlb: makeRegistry() };
-  const LEAGUES = ['nfl', 'cfb', 'nba', 'mlb'];
+  const REG = { nfl: makeRegistry(), cfb: makeRegistry(), nba: makeRegistry(), mlb: makeRegistry(), cbb: makeRegistry() };
+  const LEAGUES = ['nfl', 'cfb', 'nba', 'mlb', 'cbb'];
+  const COLLEGE = { cfb: true, cbb: true };   // teams come from ESPN as they appear, abbreviations used as sent
 
   /* priority: 3 = abbreviation, 2 = city/short name/full name, 1 = nickname. Equal-priority clashes become ambiguous and are dropped. */
   function addAlias(R, alias, abbr, pri) {
@@ -192,7 +193,7 @@
     ['away', 'home'].forEach(function (s) {
       const t = g[s]; if (!t) return;
       // pro teams are already in a table: only register one ESPN sends that we don't know yet
-      if (league !== 'cfb' && REG[league].INFO[t.abbr]) return;
+      if (!COLLEGE[league] && REG[league].INFO[t.abbr]) return;
       registerTeam(league, t);
     });
   }
@@ -209,7 +210,7 @@
     if (R.dirty) rebuildLong(R);
     // Try the text as written first, then slang / alternate spellings (ESPN says "UConn", slips may say "Connecticut").
     const cands = [n0];
-    if (league === 'cfb') {
+    if (COLLEGE[league]) {
       if (CFB_SLANG[n0]) cands.push(CFB_SLANG[n0]);
       if (CFB_ALT[n0]) cands.push(CFB_ALT[n0]);
       const ex = expandDir(n0); if (ex !== n0) { cands.push(ex); if (CFB_SLANG[ex]) cands.push(CFB_SLANG[ex]); }
@@ -241,7 +242,7 @@
   function name(abbr, league) {
     const i = infoFor(abbr, league);
     if (!i) return abbr || '';
-    return league === 'cfb' || (!league && !REG.nfl.INFO[abbr] && !REG.nba.INFO[abbr] && !REG.mlb.INFO[abbr]) ? (i.short || i.city || abbr) : (i.nick || i.short || i.city || abbr);
+    return COLLEGE[league] || (!league && !REG.nfl.INFO[abbr] && !REG.nba.INFO[abbr] && !REG.mlb.INFO[abbr]) ? (i.short || i.city || abbr) : (i.nick || i.short || i.city || abbr);
   }
   function fullName(abbr, league) { const i = infoFor(abbr, league); return i ? i.full : abbr || ''; }
 
