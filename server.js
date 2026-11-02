@@ -178,6 +178,15 @@ const legBrief = function (l) {
 };
 
 /* ---------------- leg -> game resolution ---------------- */
+/* "Seattle" vs "Seattle U", "Miami" vs "Miami (OH)": the same school written shorter or longer, word by word. */
+function looseName(text, side) {
+  const t = Teams.norm(text || '');
+  if (!t || t.length < 3 || !side) return false;
+  return [side.name, side.short, side.location, side.abbr].some(function (x) {
+    const s = Teams.norm(x || '');
+    return !!s && (s === t || s.startsWith(t + ' ') || t.startsWith(s + ' '));
+  });
+}
 /* What sport a leg is, from what it bets on (not the model's league label, which can be wrong): a points prop or a 145.5 total is basketball,
    a TD scorer or a 47.5 total is football. null when the leg itself doesn't say. */
 const HOOPS_STATS = new Set(['points', 'rebounds', 'assists', 'three_pointers_made', 'three_pointers_attempted', 'field_goals_made', 'field_goals_attempted', 'free_throws_made',
@@ -344,6 +353,20 @@ async function resolveIn(leg, games, hint, strict, lean) {
   const matchup = [leg.away_team, leg.home_team].filter(Boolean);
   let cands = [];
   if (matchup.length === 2) cands = pool.filter(function (g) { return matchup.every(function (n) { return refers(n, g); }); });
+  // Both teams of the printed matchup in one game is the strongest clue there is. If no game in the labelled league has both
+  // ("Ohio State @ BYU" labelled college football, but it is a basketball game), look in every league before settling for a game
+  // that only has the one team (that is how BYU's basketball ML ended up in BYU–Utah football).
+  if (!cands.length && matchup.length === 2) {
+    cands = games.filter(function (g) { return matchup.every(function (n) { return refers(n, g); }); });
+    // still nothing: one team matches and the other is a looser spelling of the opponent ("Seattle" for ESPN's "Seattle U")
+    if (!cands.length) cands = games.filter(function (g) {
+      const hit = matchup.map(function (n) { return refers(n, g); });
+      if (hit[0] === hit[1]) return false;
+      const other = hit[0] ? matchup[1] : matchup[0];
+      return [g.away, g.home].some(function (side) { return looseName(other, side); });
+    });
+    if (cands.length && hint && cands.every(function (g) { return g.league !== hint; })) hint = null;
+  }
   if (!cands.length && leg.team) cands = pool.filter(function (g) { return refers(leg.team, g); });
   if (!cands.length && matchup.length) cands = pool.filter(function (g) { return matchup.some(function (n) { return refers(n, g); }); });
   let game = pickGame(cands, leg);

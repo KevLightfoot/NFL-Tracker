@@ -257,6 +257,12 @@
     return r;
   }
 
+  /* Which side of game g the leg's team is: its name first, then the team the server matched when it placed the leg. */
+  function teamIn(leg, g, lg) {
+    const inGame = function (a) { return a && (a === g.away.abbr || a === g.home.abbr) ? a : null; };
+    return inGame(Teams.matchTeam(leg.team, lg)) || inGame(leg.teamResolved) || inGame(Teams.matchTeam(leg.team, g.league, true));
+  }
+
   function compute(leg, g, r) {
     const market = leg.market;
     const lg = (g && g.league) || leg.league || undefined; // 'nfl' | 'cfb' | undefined
@@ -277,8 +283,8 @@
     }
 
     if (market === 'moneyline' || market === 'spread') {
-      const abbr = Teams.matchTeam(leg.team, lg);
-      if (!abbr || (abbr !== g.away.abbr && abbr !== g.home.abbr)) { r.detail = 'Team not found in this game — edit the leg'; return; }
+      const abbr = teamIn(leg, g, lg);
+      if (!abbr) { r.detail = 'Team not found in this game — edit the leg'; return; }
       const sc = scopedScore(g, leg.period);
       const mine = abbr === g.away.abbr ? sc.away : sc.home;
       const opp = abbr === g.away.abbr ? sc.home : sc.away;
@@ -306,8 +312,8 @@
       const sc = scopedScore(g, leg.period);
       let total = sc.away + sc.home;
       if (market === 'team_total') {
-        const abbr = Teams.matchTeam(leg.team, lg);
-        if (!abbr || (abbr !== g.away.abbr && abbr !== g.home.abbr)) { r.detail = 'Team not found in this game — edit the leg'; return; }
+        const abbr = teamIn(leg, g, lg);
+        if (!abbr) { r.detail = 'Team not found in this game — edit the leg'; return; }
         total = abbr === g.away.abbr ? sc.away : sc.home;
       }
       if (!hasLine(leg)) return noLine(r);

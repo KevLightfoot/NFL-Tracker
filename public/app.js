@@ -576,7 +576,7 @@
     });
   }
 
-  const RESOLVER_V = 3;   // bump to make every prop with no matchup on its slip get placed again
+  const RESOLVER_V = 4;   // bump to make every prop with no matchup on its slip get placed again
 
   /* ---------------- refresh loop ---------------- */
   async function refreshAll() {
@@ -587,7 +587,7 @@
       const need = [], slipOf = {};
       // Props placed by the old resolver may sit in a college game with the same player name; place those once more.
       S.parlays.forEach(function (p) { if (p.demo) return; p.legs.forEach(function (l) {
-        if (l.player && l.gameId && !l.pinned && !l.team && !l.away_team && !l.home_team && (l.rv || 0) < RESOLVER_V && Date.now() - (p.createdAt || 0) < 3 * 864e5) { l.gameId = null; l.teamResolved = null; }
+        if (l.gameId && !l.pinned && ((l.player && !l.team && !l.away_team && !l.home_team) || (l.away_team && l.home_team)) && (l.rv || 0) < RESOLVER_V && Date.now() - (p.createdAt || 0) < 3 * 864e5) { l.prevGame = [l.gameId, l.teamResolved]; l.gameId = null; l.teamResolved = null; }
       }); });
       S.parlays.forEach(function (p) { p.legs.forEach(function (l) { E.applyLadder(l, false); if (!l.gameId && !l.noResolve && l.market !== 'other') { need.push(l); slipOf[l.id] = p.id; } }); });
       if (need.length) {
@@ -598,6 +598,12 @@
             if (l) { if (r.gameId) { l.gameId = r.gameId; l.rv = RESOLVER_V; } if (r.team) l.teamResolved = r.team; if (r.league) l.league = r.league; }
           });
         } catch (e) { err = e.message; }
+        // a leg that was re-checked but got no better game keeps the one it had (and on a network error it just tries again next time)
+        need.forEach(function (l) {
+          if (!l.prevGame) return;
+          if (!l.gameId) { l.gameId = l.prevGame[0]; l.teamResolved = l.teamResolved || l.prevGame[1]; if (!err) l.rv = RESOLVER_V; }
+          delete l.prevGame;
+        });
       }
       const ids = [], leagueOf = {};
       S.parlays.forEach(function (p) { p.legs.forEach(function (l) { if (l.gameId && ids.indexOf(l.gameId) < 0) ids.push(l.gameId); if (l.gameId && l.league) leagueOf[l.gameId] = l.league; }); });
