@@ -182,9 +182,14 @@ const legBrief = function (l) {
 function looseName(text, side) {
   const t = Teams.norm(text || '');
   if (!t || t.length < 3 || !side) return false;
+  const tw = t.split(' ');
   return [side.name, side.short, side.location, side.abbr].some(function (x) {
     const s = Teams.norm(x || '');
-    return !!s && (s === t || s.startsWith(t + ' ') || t.startsWith(s + ' '));
+    if (!s) return false;
+    if (s === t || s.startsWith(t + ' ') || t.startsWith(s + ' ')) return true;
+    // every word written is the start of the school's word in the same place: "san fran" / "san francisco", "radf" / "radford"
+    const sw = s.split(' ');
+    return tw.length <= sw.length && tw.every(function (w, i) { return w.length >= (tw.length === 1 ? 4 : 3) && sw[i].startsWith(w); });
   });
 }
 /* What sport a leg is, from what it bets on (not the model's league label, which can be wrong): a points prop or a 145.5 total is basketball,
@@ -360,10 +365,15 @@ async function resolveIn(leg, games, hint, strict, lean) {
     cands = games.filter(function (g) { return matchup.every(function (n) { return refers(n, g); }); });
     // still nothing: one team matches and the other is a looser spelling of the opponent ("Seattle" for ESPN's "Seattle U")
     if (!cands.length) cands = games.filter(function (g) {
-      const hit = matchup.map(function (n) { return refers(n, g); });
-      if (hit[0] === hit[1]) return false;
-      const other = hit[0] ? matchup[1] : matchup[0];
-      return [g.away, g.home].some(function (side) { return looseName(other, side); });
+      // each printed name must point at a different team of the game, by its name or a looser spelling of it
+      const sideOf = function (n) {
+        const a = Teams.matchTeam(n, g.league, false);
+        if (a === g.away.abbr || looseName(n, g.away)) return a === g.home.abbr ? 'both' : 'away';
+        if (a === g.home.abbr || looseName(n, g.home)) return 'home';
+        return null;
+      };
+      const x = sideOf(matchup[0]), y = sideOf(matchup[1]);
+      return !!x && !!y && (x !== y || x === 'both');
     });
     if (cands.length && hint && cands.every(function (g) { return g.league !== hint; })) hint = null;
   }
@@ -371,6 +381,9 @@ async function resolveIn(leg, games, hint, strict, lean) {
   if (!cands.length && matchup.length) cands = pool.filter(function (g) { return matchup.some(function (n) { return refers(n, g); }); });
   let game = pickGame(cands, leg);
   let team = game && leg.team ? (Teams.matchTeam(leg.team, game.league, strict) || null) : null;
+  if (game && leg.team && (!team || (team !== game.away.abbr && team !== game.home.abbr))) {
+    team = looseName(leg.team, game.away) ? game.away.abbr : looseName(leg.team, game.home) ? game.home.abbr : team;
+  }
 
   if (!game && leg.player) {
     const hit = await findPlayerGame(leg, games, hint, lean);
@@ -479,6 +492,9 @@ function systemPrompt() {
     '- DraftKings Predictions / "Pick Combo" and trade slips print each leg with the THRESHOLD as a big heading ("30+", "2+", "1+"), then the matchup, then "Player Stat" (e.g. "Jalen Coker Receiving Yards"). The heading is the line: raw_text = "30+ Jalen Coker Receiving Yards", side over, line 29.5. A heading with the player and stat below it is ONE leg, never two. Never leave the line empty on a prop; if a number is printed anywhere in the leg, it is the line.',
     '- Ticket-list / open-bets rows from offshore and book sites (a ticket id like "G14556079", a red amount, then another amount, and legs written "Football - Cleveland Browns vs Pittsburgh Steelers / Game / total player touchdowns / Jaylen Warren Over 0.5 +114"): the RED amount is the RISK (wager) and the amount after it is what it pays TO WIN (profit, put it in to_win and leave payout null). The names before "/ Game" are the matchup, away team first: away_team and home_team on that leg. The last number on the leg (+114, -126) is that leg\'s odds. Each ticket id is its own bet; one ticket can list several legs (a parlay). Never mix up the two money columns, even when the column headers are cut off.',
     '- "total player touchdowns" with "Over 0.5" is an anytime touchdown: market anytime_td, side yes, line null (raw_text keeps the printed text). "Over 1.5 total player touchdowns" is player_prop, stat total_tds, side over, line 1.5.',
+    '- Team logos printed next to a name tell you which school or league it is: "Seattle" with a college logo (e.g. a red "SU") is Seattle U basketball, not the Seahawks. Set league from the logo when the text alone is ambiguous.',
+    '- Live score boxes printed under a leg ("2nd Half 0:52", H1 / H2 / T columns, a running score) show how the game is going, NOT what was bet: period comes only from the market name ("1st Half Spread", "2nd Half Total"); a plain spread or "To Win" is period full.',
+    '- Short team names on cards ("SAN FRAN", "RADF", "OSU") are abbreviations of the schools printed next to them; copy them as shown, and if the card also shows the full school name, use that.',
     '- If a field is not on the slip use null. Put anything uncertain in warnings.',
   ].join('\n');
 }
@@ -496,8 +512,12 @@ function legsMissingLine(bet) {
   return out;
 }
 
-async function parseSlip(images, userKey) {
-  const first = await callModel(images, userKey, '');
+/* The bettor's own note about a slip ("Seattle is college basketball vs Hawaii"): plain text, one paragraph, 300 characters at most. */
+function cleanNote(n) { return String(n == null ? '' : n).replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300); }
+
+async function parseSlip(images, userKey, userNote) {
+  userNote = cleanNote(userNote);
+  const first = await callModel(images, userKey, '', userNote);
   const missing = legsMissingLine(first);
   if (!missing.length) return first;
   // One more look, pointing at exactly what was missed: the line is the single most important number on a leg.
@@ -505,13 +525,13 @@ async function parseSlip(images, userKey) {
   const note = 'Your previous answer left the line empty on these legs: ' + missing.map(function (l) { return (l.player || l.team || l.raw_text || 'leg') + (l.stat ? ' ' + l.stat : ''); }).join('; ') +
     '. Look at the screenshot again. Every leg prints its number: on DraftKings Predictions it is the big heading of the leg ("30+", "2+", "1+"), above the game and the "Player Stat" line, and "N+" means line N-0.5 with side over. Return the complete slip again with every line filled in.';
   try {
-    const second = await callModel(images, userKey, note);
+    const second = await callModel(images, userKey, note, userNote);
     if (legsMissingLine(second).length < missing.length) { log('parse_retry_better', { before: missing.length, after: legsMissingLine(second).length }); return second; }
   } catch (e) { log('parse_retry_failed', { error: String(e.message || e).slice(0, 200) }); }
   return first;
 }
 
-async function callModel(images, userKey, extraNote) {
+async function callModel(images, userKey, extraNote, userNote) {
   const key = userKey || process.env.OPENAI_API_KEY;
   if (!key) { const e = new Error('No OpenAI API key. Add OPENAI_API_KEY to the server environment or paste one in Settings.'); e.status = 401; throw e; }
   const content = [];
@@ -519,6 +539,7 @@ async function callModel(images, userKey, extraNote) {
     if (images.length > 1) content.push({ type: 'text', text: 'Image ' + (i + 1) + ' of ' + images.length + ' (overlapping slice of the same slip, top to bottom):' });
     content.push({ type: 'image_url', image_url: { url: 'data:' + im.mediaType + ';base64,' + im.data, detail: 'high' } });
   });
+  if (userNote) content.push({ type: 'text', text: 'The bettor wrote this note about the slip. It is about THIS slip and comes from the person who placed it, so trust it over your own guesses for leagues, teams, matchups, dates or players the image leaves unclear (fill league, away_team, home_team and game_date from it where it applies). Never add legs that are not on the slip because of it. Note: "' + userNote.replace(/"/g, "'") + '"' });
   content.push({ type: 'text', text: 'Extract this bet slip with the submit_bet function.' + (extraNote ? ' ' + extraNote : '') });
   const openAITool = { type: 'function', function: { name: TOOL.name, description: TOOL.description, parameters: TOOL.input_schema, strict: false } };
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -638,7 +659,8 @@ async function handleApi(req, res, url) {
     if (!images.length) return send(res, 400, { error: 'No usable image. Use a PNG, JPG or WebP screenshot.' });
     const t0 = Date.now();
     let bet;
-    try { bet = await parseSlip(images, req.headers['x-api-key']); }
+    const note = cleanNote(body.note);
+    try { bet = await parseSlip(images, req.headers['x-api-key'], note); }
     catch (e) { log('parse_error', { ms: Date.now() - t0, images: images.length, error: String(e.message || e).slice(0, 300) }); throw e; }
     const extra = Array.isArray(bet.additional_bets) ? bet.additional_bets : [];
     const allBets = [bet].concat(extra);

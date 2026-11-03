@@ -11,8 +11,8 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Parlays">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <link rel="stylesheet" href="styles.css?v=20261102b">
-  <link rel="stylesheet" href="portfolio.css?v=20261102b">
+  <link rel="stylesheet" href="styles.css?v=20261103b">
+  <link rel="stylesheet" href="portfolio.css?v=20261103b">
 </head>
 <body>
   <header class="top">
@@ -39,6 +39,11 @@
 
     <div id="drop" hidden></div>
     <input id="file" type="file" accept="image/*" multiple hidden>
+    <div class="slip-note">
+      <label for="slipNote">Anything the slip doesn't make clear? <span>optional</span></label>
+      <textarea id="slipNote" rows="2" maxlength="300" placeholder="e.g. Seattle is college basketball vs Hawaii · San Fran is the San Francisco Dons"></textarea>
+      <small>Sent with your next upload so the reader gets those legs right.</small>
+    </div>
     <button class="btn photo-btn" type="button" id="choosePhoto">Upload bet slip screenshot</button>
     <label class="combine" id="combineWrap" hidden><input type="checkbox" id="combine"> Treat selected images as <b>one</b> slip (scrolled screenshots)</label>
 
@@ -155,13 +160,13 @@
   </dialog>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-  <script src="config.js?v=20261102b"></script>
-  <script src="lib/cloud.js?v=20261102b"></script>
-  <script src="lib/teams.js?v=20261102b"></script>
-  <script src="lib/stats.js?v=20261102b"></script>
-  <script src="lib/evaluate.js?v=20261102b"></script>
-  <script src="demo.js?v=20261102b"></script>
-  <script src="portfolio.js?v=20261102b"></script>
-  <script src="app.js?v=20261102b"></script>
+  <script src="config.js?v=20261103b"></script>
+  <script src="lib/cloud.js?v=20261103b"></script>
+  <script src="lib/teams.js?v=20261103b"></script>
+  <script src="lib/stats.js?v=20261103b"></script>
+  <script src="lib/evaluate.js?v=20261103b"></script>
+  <script src="demo.js?v=20261103b"></script>
+  <script src="portfolio.js?v=20261103b"></script>
+  <script src="app.js?v=20261103b"></script>
 </body>
 </html>

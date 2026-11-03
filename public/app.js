@@ -313,6 +313,12 @@
     let payout = num(bet.payout);
     const toWin = num(bet.to_win);
     if (payout == null && wager != null && toWin != null) payout = Math.round((wager + toWin) * 100) / 100;
+    // Ticket rows print "risk" and "to win" side by side; when the reader files the to-win figure as the payout, the printed odds give it away:
+    // $54 at +115 shown as $54 / $63 is 54 risk, 63 to win (payout 117), not a 54-to-return-63 bet at -600.
+    const printed = bet.total_odds || (bet.legs && bet.legs.length === 1 && bet.legs[0].odds) || '';
+    if (printed && wager != null && payout != null && toWin == null && !E.printedOddsAgree(printed, wager, payout) && E.printedOddsAgree(printed, wager, wager + payout)) {
+      payout = Math.round((wager + payout) * 100) / 100;
+    }
     const p = {
       id: uid(), createdAt: Date.now(), name: '', sportsbook: bet.sportsbook || '', betType: bet.bet_type || 'parlay', credit: false,
       wager: wager, payout: payout, odds: bet.total_odds || '', printedOdds: bet.total_odds || (bet.legs && bet.legs.length === 1 && bet.legs[0].odds) || '', slipStatus: bet.slip_status || '', warnings: bet.warnings || [],
@@ -406,7 +412,7 @@
         ? '<div><label>RISK</label><b>' + money(p.wager) + '</b></div><div class="payout"><label>TO WIN</label><b>' + money(p.wager != null && p.payout != null ? Math.round((p.payout - p.wager) * 100) / 100 : null) + '</b></div>'
         : '<div><label>WAGER</label><b>' + money(p.wager) + '</b></div><div class="payout"><label>PAYOUT</label><b>' + money(p.payout) + '</b></div>') +
       '<div><label>ODDS</label><b>' + esc(p.odds || '—') + '</b></div></div>' +
-      '<div class="segs">' + segs + '</div>' + warns + '</div>' +
+      '<div class="segs">' + segs + '</div>' + warns + (p.note ? '<div class="p-note">Your note: ' + esc(p.note) + '</div>' : '') + '</div>' +
       '<div class="pbody"' + (collapsed ? ' hidden' : '') + '>' +
       '<ul class="legs">' + legsSorted.map(function (l, i) { return legHTML(p, l, results[i]); }).join('') + '</ul>' +
       '<div class="pf"><span>' + esc(upd) + '</span><span class="btns"><button class="btn small' + (p.credit ? ' on' : '') + '" data-act="offshore" data-p="' + p.id + '" aria-pressed="' + !!p.credit + '">Offshore' + (p.credit ? ' ✓' : '') + '</button><button class="btn small" data-act="edit-bet" data-p="' + p.id + '">Edit bet</button><button class="btn small danger" data-act="clear-slip" data-p="' + p.id + '">Clear slip</button></span></div></div></article>';
@@ -692,7 +698,7 @@
       const tiles = [].concat.apply([], imgs.map(function (i) { return i.tiles; }));
       if (tiles.length > 12) throw new Error('That screenshot is extremely long (' + tiles.length + ' slices). Upload it in two or three smaller pieces.');
       renderPending();
-      const j = await api('/api/parse', { method: 'POST', body: JSON.stringify({ images: tiles }) });
+      const j = await api('/api/parse', { method: 'POST', body: JSON.stringify({ images: tiles, note: entry.note || '' }) });
       const bets = (j.bets && j.bets.length ? j.bets : [j.bet || {}]).map(function (b) { return buildParlay(b, entry.thumb); }).filter(function (p) { return p.legs.length; });
       if (!bets.length) throw new Error('No bets found in that image. Try a clearer or fuller screenshot.');
       // Never load a slip whose lines didn't come through (it would show 0s and "clear" everything). The same screenshot usually reads
@@ -708,6 +714,10 @@
       }
       if (bare.length) report('parse_saved_without_lines', { bare: bare.slice(0, 6) });
       S.pending = S.pending.filter(function (x) { return x.id !== entry.id; });
+      if (entry.note) {
+        bets.forEach(function (p) { p.note = entry.note; });
+        const box = $('#slipNote'); if (box && box.value.trim() === entry.note) box.value = '';   // used up; a new note goes with the next slip
+      }
       bets.reverse().forEach(function (p) { S.parlays.unshift(p); });
       save(); renderPending(); render(); refreshAll();
       const warn = [].concat.apply([], bets.map(function (p) { return (p.warnings || []).filter(usefulWarning); }));
@@ -726,7 +736,8 @@
     const combine = files.length > 1 && $('#combine').checked;
     const groups = combine ? [files] : files.map(function (f) { return [f]; });
     groups.forEach(function (g) {
-      const entry = { id: uid(), files: g, thumb: null, error: null };
+      const noteBox = $('#slipNote');
+      const entry = { id: uid(), files: g, thumb: null, error: null, note: noteBox ? noteBox.value.trim().slice(0, 300) : '' };
       S.pending.unshift(entry);
       processGroup(entry);
     });
@@ -892,8 +903,31 @@
   }
 
   /* ---------------- init ---------------- */
+  /* ---------------- updates ----------------
+     A home-screen app can keep running yesterday's files for a long time. BUILD must equal the ?v= tag on the scripts in index.html;
+     when the live index.html carries a different tag, the page reloads itself once to pick up the new version. */
+  const BUILD = '20261103b';
+  let lastUpdateCheck = 0;
+  async function checkForUpdate() {
+    if (Date.now() - lastUpdateCheck < 60000 || !/^https?:/.test(location.protocol)) return;
+    lastUpdateCheck = Date.now();
+    try {
+      const res = await fetch('index.html?check=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) return;
+      const m = (await res.text()).match(/app\.js\?v=([\w.-]+)/);
+      if (!m || m[1] === BUILD) return;
+      const key = 'pt-reloaded-for';
+      let tried = null; try { tried = sessionStorage.getItem(key); } catch (e) { /* private mode */ }
+      if (tried === m[1]) return;                       // already reloaded once for this version: don't loop
+      try { sessionStorage.setItem(key, m[1]); } catch (e) { /* ignore */ }
+      save();
+      location.reload();
+    } catch (e) { /* offline: try again later */ }
+  }
+
   function init() {
     load();
+    checkForUpdate();
     const drop = $('#drop'), file = $('#file');
     // Keep desktop click-to-upload, but on touch devices let the box act as a paste target.
     drop.addEventListener('click', function (e) {
@@ -961,7 +995,7 @@
     $('#acctSignOut').addEventListener('click', async function () { await notifOff(); await C.cloud.signOut(); C.state = 'off'; C.last = null; acctRender(); renderBanner(); toast('Signed out. Your data stays in the cloud.'); });
     $('#acctPass').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); acctDo('in'); } });
     $('#acctEmail').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('#acctPass').focus(); } });
-    document.addEventListener('visibilitychange', function () { if (!document.hidden) { if (S.parlays.length) refreshAll(); syncAll(); } });
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) { checkForUpdate(); if (S.parlays.length) refreshAll(); syncAll(); } });
 
     wireDialogs();
     cloudInit();
