@@ -451,15 +451,15 @@
       });
     });
     const rows = Object.keys(byGame).map(function (k) { return byGame[k]; });
-    // Show only when there are 2+ slips and at least one game isn't in every slip.
-    if (slips.length < 2 || !rows.some(function (r) { return r.slips.length < slips.length; })) { el.hidden = true; el.innerHTML = ''; return; }
+    // Shown whenever any slip has a game placed (one slip too: it still has the live field view and the totals).
+    if (!slips.length || !rows.length) { el.hidden = true; el.innerHTML = ''; return; }
     rows.sort(function (a, b) { const x = Date.parse(a.g.date), y = Date.parse(b.g.date); return (isNaN(x) ? Infinity : x) - (isNaN(y) ? Infinity : y); });
     const labels = slips.map(function (p) { return p.name || (p.legs.length + '-Leg ' + (BET_LABEL[p.betType] || 'Parlay')); });
     const seen = {};
     const names = labels.map(function (n) { const dup = labels.filter(function (x) { return x === n; }).length > 1; seen[n] = (seen[n] || 0) + 1; return dup ? n + ' #' + seen[n] : n; });
     const open = !!S.gamesOpen;
     el.hidden = false;
-    el.innerHTML = '<button class="gp-head" type="button" aria-expanded="' + open + '" data-gp="toggle"><span><b>All games</b><small>' + rows.length + ' games across ' + slips.length + ' slips</small></span><span class="chev' + (open ? '' : ' down') + '" aria-hidden="true"></span></button>' +
+    el.innerHTML = '<button class="gp-head" type="button" aria-expanded="' + open + '" data-gp="toggle"><span><b>All games</b><small>' + rows.length + ' game' + (rows.length === 1 ? '' : 's') + ' across ' + slips.length + ' slip' + (slips.length === 1 ? '' : 's') + '</small></span><span class="chev' + (open ? '' : ' down') + '" aria-hidden="true"></span></button>' +
       '<div class="gp-body"' + (open ? '' : ' hidden') + '>' + rows.map(function (r) {
         const g = r.g, pre = g.state === 'pre', gid = g.id, isOpen = S.gamesExpanded.has(gid);
         const legs = gameLegs(gid, slips, names);
@@ -906,7 +906,7 @@
   /* ---------------- updates ----------------
      A home-screen app can keep running yesterday's files for a long time. BUILD must equal the ?v= tag on the scripts in index.html;
      when the live index.html carries a different tag, the page reloads itself once to pick up the new version. */
-  const BUILD = '20261103b';
+  const BUILD = '20261103d';
   let lastUpdateCheck = 0;
   async function checkForUpdate() {
     if (Date.now() - lastUpdateCheck < 60000 || !/^https?:/.test(location.protocol)) return;
