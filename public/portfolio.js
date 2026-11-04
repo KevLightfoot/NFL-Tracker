@@ -9,7 +9,7 @@
   'use strict';
 
   const LS_KEY = 'parlay-tracker.portfolio.v1';
-  const WEEK_START = 2; // 0=Sun … 2=Tue. NFL betting weeks run Tue → Mon (Thu, Sun and Monday games land together).
+  const WEEK_START = 1; // 0=Sun, 1=Mon … weeks run Monday → Sunday. Nothing is stored by week, so every past week regroups on its own.
 
   /* ======================= pure logic (unit-tested) ======================= */
   const pad = function (n) { return String(n).padStart(2, '0'); };
@@ -71,6 +71,23 @@
   function dayLabel(s) { const d = parseDay(s); return DAYS[d.getDay()] + ', ' + MONTHS[d.getMonth()] + ' ' + d.getDate(); }
   function shortDay(s) { const d = parseDay(s); return MONTHS[d.getMonth()] + ' ' + d.getDate(); }
 
+  /* One day / week / month around an anchor date, and stepping to the previous or next one. */
+  function period(mode, anchor) {
+    anchor = anchor || today();
+    if (mode === 'week') { const s = weekStart(anchor), e = addDays(s, 6); return { start: s, end: e, label: shortDay(s) + ' – ' + shortDay(e) + (s.slice(0, 4) !== String(new Date().getFullYear()) ? ', ' + s.slice(0, 4) : '') }; }
+    if (mode === 'month') {
+      const d = parseDay(anchor), s = ymd(new Date(d.getFullYear(), d.getMonth(), 1)), e = ymd(new Date(d.getFullYear(), d.getMonth() + 1, 0));
+      return { start: s, end: e, label: MONTHS_LONG[d.getMonth()] + ' ' + d.getFullYear() };
+    }
+    return { start: anchor, end: anchor, label: dayLabel(anchor) + (anchor.slice(0, 4) !== String(new Date().getFullYear()) ? ', ' + anchor.slice(0, 4) : '') };
+  }
+  function stepPeriod(mode, anchor, dir) {
+    if (mode === 'week') return addDays(weekStart(anchor), 7 * dir);
+    if (mode === 'month') { const d = parseDay(anchor); return ymd(new Date(d.getFullYear(), d.getMonth() + dir, 1)); }
+    return addDays(anchor, dir);
+  }
+  function inPeriod(entries, mode, anchor) { const p = period(mode, anchor); return entries.filter(function (e) { return e.date >= p.start && e.date <= p.end; }); }
+
   const byNewest = function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : (b.createdAt || 0) - (a.createdAt || 0); };
 
   /* mode: 'day' | 'week' | 'ytd' (ytd = current-year entries grouped by month) */
@@ -113,7 +130,7 @@
     };
   }
 
-  const logic = { toWinOf: toWinOf, payoutFromToWin: payoutFromToWin, ymd: ymd, today: today, weekStart: weekStart, addDays: addDays, profit: profit, summarize: summarize, filter: filter, group: group, rangeSummaries: rangeSummaries, makeEntry: makeEntry, num: num };
+  const logic = { period: period, stepPeriod: stepPeriod, inPeriod: inPeriod, toWinOf: toWinOf, payoutFromToWin: payoutFromToWin, ymd: ymd, today: today, weekStart: weekStart, addDays: addDays, profit: profit, summarize: summarize, filter: filter, group: group, rangeSummaries: rangeSummaries, makeEntry: makeEntry, num: num };
 
   /* ======================= UI (browser only) ======================= */
   if (typeof document === 'undefined') return Object.assign({ WEEK_START: WEEK_START }, logic);
@@ -127,7 +144,7 @@
   const pct = function (x) { return x == null ? '—' : Math.round(x * 100) + '%'; };
   const BET_LABEL = { parlay: 'Parlay', same_game_parlay: 'Same Game Parlay', single: 'Single', round_robin: 'Round Robin', teaser: 'Teaser', other: 'Bet' };
 
-  const U = { entries: [], mode: 'day', status: 'placed', date: '', view: 'tracker', onSave: null };
+  const U = { entries: [], mode: 'day', status: 'placed', date: '', anchor: '', view: 'tracker', onSave: null };
 
   function load() {
     try { U.entries = (JSON.parse(localStorage.getItem(LS_KEY) || '[]') || []).map(makeEntry); } catch (e) { U.entries = []; }
@@ -317,25 +334,51 @@
   function render() {
     const root = $('#viewPortfolio'); if (!root) return;
     const R = rangeSummaries(U.entries);
-    const list = filter(U.entries, { status: U.status, date: U.date });
-    const groups = group(list, U.mode);
-    const modes = [['day', 'Daily'], ['week', 'Weekly'], ['ytd', 'YTD']];
+    const nav = U.mode !== 'ytd';                               // day / week / month: one at a time, with arrows
+    const anchor = U.anchor || today();
+    const per = nav ? period(U.mode, anchor) : null;
+    const list = filter(nav ? inPeriod(U.entries, U.mode, anchor) : U.entries, { status: U.status });
+    const modes = [['day', 'Daily'], ['week', 'Weekly'], ['month', 'Monthly'], ['ytd', 'YTD']];
     const stats = [['placed', 'Placed'], ['won', 'Won'], ['lost', 'Lost']];
+    const isNow = nav && per.start <= today() && per.end >= today();
+    const nowWord = { day: 'Today', week: 'This week', month: 'This month' }[U.mode];
     let html =
       '<div class="pf-cards">' + statCard('Today', R.today) + statCard('This week', R.week) + statCard('YTD ' + new Date().getFullYear(), R.ytd) + '</div>' +
       '<div class="pf-ytd">YTD record <b>' + R.ytd.won + '–' + R.ytd.lost + '</b> · win rate <b>' + pct(R.ytd.winRate) + '</b> · ROI <b>' + pct(R.ytd.roi) + '</b> · wagered <b>' + usd(R.ytd.wagered) + '</b>' + (R.ytd.creditWagered ? ' <span class="sub">(' + usd(R.ytd.cashWagered) + ' cash + ' + usd(R.ytd.creditWagered) + ' credit)</span>' : '') + '</div>' +
       '<div class="pf-ctrl"><div class="segctl">' + modes.map(function (m) { return '<button data-mode="' + m[0] + '" class="' + (U.mode === m[0] ? 'on' : '') + '">' + m[1] + '</button>'; }).join('') + '</div>' +
+      (nav ? '<div class="pf-nav"><button class="pf-arrow" data-step="-1" aria-label="Previous">‹</button>' +
+        '<label class="pf-when" title="Pick a date"><span>' + esc(per.label) + '</span><input type="date" id="pfDate" value="' + esc(anchor) + '" aria-label="Pick a date"></label>' +
+        '<button class="pf-arrow" data-step="1" aria-label="Next">›</button>' +
+        (isNow ? '' : '<button class="btn small" id="pfNow">' + nowWord + '</button>') + '</div>' : '') +
       '<div class="chips">' + stats.map(function (m) { return '<button data-status="' + m[0] + '" class="chip st-' + m[0] + (U.status === m[0] ? ' on' : '') + '">' + m[1] + '</button>'; }).join('') + '</div>' +
-      '<div class="pf-date"><label>Jump to date <input type="date" id="pfDate" value="' + esc(U.date) + '"></label>' + (U.date ? '<button class="btn small" id="pfDateClear">Clear</button>' : '') + '</div>' +
       '<div class="pf-tools"><button class="btn small primary" id="pfLog">+ Log bet</button><button class="btn small" id="pfCsv">Export CSV</button></div></div>';
 
-    if (!groups.length) html += '<p class="empty">' + (U.entries.length ? 'No slips match these filters.' : 'No slips saved yet. Press <b>Clear slip</b> on a tracked slip and choose Won or Lost — or tap <b>+ Log bet</b>.') + '</p>';
-    groups.forEach(function (g) {
-      const s = g.sum, cls = s.net > 0 ? 'pos' : s.net < 0 ? 'neg' : '';
-      html += '<section class="pf-group"><header><div><h3>' + esc(g.label) + '</h3><span class="sub">' + s.count + ' slip' + (s.count === 1 ? '' : 's') + ' · ' + s.won + 'W ' + s.lost + 'L' + (s.placed ? ' ' + s.placed + ' pending' : '') + '</span></div>' +
-        '<div class="gt"><b class="' + cls + '">' + signed(s.net) + '</b><span class="sub2">' + moneyLine(s) + '</span></div></header>' +
-        g.entries.map(entryHTML).join('') + '</section>';
-    });
+    if (nav) {
+      const s = summarize(list), cls = s.net > 0 ? 'pos' : s.net < 0 ? 'neg' : '';
+      if (!list.length) {
+        const where = U.mode === 'day' ? 'this day' : U.mode === 'week' ? 'this week' : 'this month';
+        html += '<p class="empty">' + (U.entries.length ? 'No ' + (U.status === 'placed' ? '' : U.status + ' ') + 'slips ' + where + '. Use the arrows to look at other ' + { day: 'days', week: 'weeks', month: 'months' }[U.mode] + '.' : 'No slips saved yet. Press <b>Clear slip</b> on a tracked slip and choose Won or Lost — or tap <b>+ Log bet</b>.') + '</p>';
+      } else {
+        html += '<section class="pf-group"><header><div><h3>' + esc(per.label) + '</h3><span class="sub">' + s.count + ' slip' + (s.count === 1 ? '' : 's') + ' · ' + s.won + 'W ' + s.lost + 'L' + (s.placed ? ' ' + s.placed + ' pending' : '') + '</span></div>' +
+          '<div class="gt"><b class="' + cls + '">' + signed(s.net) + '</b><span class="sub2">' + moneyLine(s) + '</span></div></header>';
+        // a week or month lists its days, newest first, each with its own day header
+        const days = U.mode === 'day' ? [{ entries: list.slice().sort(byNewest) }] : group(list, 'day');
+        days.forEach(function (g) {
+          if (U.mode !== 'day') { const ds = g.sum, dc = ds.net > 0 ? 'pos' : ds.net < 0 ? 'neg' : ''; html += '<div class="pf-day"><span>' + esc(g.label) + '</span><b class="' + dc + '">' + signed(ds.net) + '</b></div>'; }
+          html += g.entries.map(entryHTML).join('');
+        });
+        html += '</section>';
+      }
+    } else {
+      const groups = group(list, 'ytd');
+      if (!groups.length) html += '<p class="empty">' + (U.entries.length ? 'No slips match these filters.' : 'No slips saved yet. Press <b>Clear slip</b> on a tracked slip and choose Won or Lost — or tap <b>+ Log bet</b>.') + '</p>';
+      groups.forEach(function (g) {
+        const s = g.sum, cls = s.net > 0 ? 'pos' : s.net < 0 ? 'neg' : '';
+        html += '<section class="pf-group"><header><div><h3>' + esc(g.label) + '</h3><span class="sub">' + s.count + ' slip' + (s.count === 1 ? '' : 's') + ' · ' + s.won + 'W ' + s.lost + 'L' + (s.placed ? ' ' + s.placed + ' pending' : '') + '</span></div>' +
+          '<div class="gt"><b class="' + cls + '">' + signed(s.net) + '</b><span class="sub2">' + moneyLine(s) + '</span></div></header>' +
+          g.entries.map(entryHTML).join('') + '</section>';
+      });
+    }
     root.innerHTML = html;
   }
 
@@ -368,7 +411,9 @@
       const t = e.target;
       if (t.closest('[data-mode]')) { U.mode = t.closest('[data-mode]').dataset.mode; return render(); }
       if (t.closest('[data-status]')) { U.status = t.closest('[data-status]').dataset.status; return render(); }
-      if (t.id === 'pfDateClear') { U.date = ''; return render(); }
+      if (t.closest('[data-step]')) { U.anchor = stepPeriod(U.mode, U.anchor || today(), +t.closest('[data-step]').dataset.step); return render(); }
+      if (t.id === 'pfNow') { U.anchor = ''; return render(); }
+      if (t.closest('.pf-when') && t.id !== 'pfDate') { const inp = $('#pfDate'); if (inp && inp.showPicker) { try { inp.showPicker(); } catch (x) { /* iOS opens it on tap */ } } return; }
       if (t.id === 'pfLog') return openEdit(null);
       if (t.id === 'pfCsv') return csv();
       const card = t.closest('.pfe'); if (!card) return;
@@ -380,7 +425,7 @@
       }
       if (t.closest('[data-edit]')) openEdit(entry);
     });
-    root.addEventListener('change', function (e) { if (e.target.id === 'pfDate') { U.date = e.target.value; render(); } });
+    root.addEventListener('change', function (e) { if (e.target.id === 'pfDate' && e.target.value) { U.anchor = e.target.value; render(); } });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
