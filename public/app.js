@@ -510,7 +510,8 @@
               const st = stakeOf(mine);
               return '<li class="gp-leg st-' + esc(rr.state) + '"><i aria-hidden="true">' + (GLYPH[rr.state] || '○') + '</i><div class="gp-ltxt">' +
                 '<div class="gp-lhead"><div><span class="gp-ltitle">' + esc(rr.title) + '</span>' + (prog ? '<span class="gp-lprog">' + esc(prog) + '</span>' : '') + '</div>' +
-                '<div class="gp-lstake"><b>' + money(st.total) + '</b>' + splitHTML(st) + '</div></div>' +
+                // one leg on the game: its stake is the game total just above, so it isn't repeated
+                (legs.length > 1 ? '<div class="gp-lstake"><b>' + money(st.total) + '</b>' + splitHTML(st) + '</div>' : '') + '</div>' +
                 order.map(function (sl) { return slipHTML(sl, e.key); }).join('') + '</div></li>';
             }).join('') + '</ul>';
         }
@@ -951,7 +952,7 @@
   /* ---------------- updates ----------------
      A home-screen app can keep running yesterday's files for a long time. BUILD must equal the ?v= tag on the scripts in index.html;
      when the live index.html carries a different tag, the page reloads itself once to pick up the new version. */
-  const BUILD = '20261123b';
+  const BUILD = '20261123c';
   let lastUpdateCheck = 0;
   async function checkForUpdate() {
     if (Date.now() - lastUpdateCheck < 60000 || !/^https?:/.test(location.protocol)) return;
