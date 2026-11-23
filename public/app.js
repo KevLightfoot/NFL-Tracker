@@ -451,14 +451,17 @@
     });
     return { total: r2c(total), play: r2c(play), lost: r2c(lost), nPlay: nPlay, nLost: nLost };
   }
+  // Only worth showing once money is lost: with nothing lost, the total above it IS what's in play.
   function splitHTML(st) {
-    return '<span class="gp-split"><span class="gp-play">' + money(st.play) + ' in play</span>' + (st.nLost ? ' <span class="gp-dot">·</span> <span class="gp-lost">' + money(st.lost) + ' lost</span>' : '') + '</span>';
+    if (!st.nLost) return '';
+    return '<span class="gp-split"><span class="gp-play">' + money(st.play) + ' in play</span> <span class="gp-dot">·</span> <span class="gp-lost">' + money(st.lost) + ' lost</span></span>';
   }
   /* One slip under a leg: its size, what it risked and can win, and every one of its legs as a tag colored by how that leg is doing. */
   function slipHTML(sl, key) {
     const p = sl.p, n = p.legs.length;
     const size = n === 1 ? 'Single' : n + '-leg ' + (BET_LABEL[p.betType] && p.betType !== 'single' ? BET_LABEL[p.betType] : 'Parlay').toLowerCase();
-    const toWin = p.wager != null && p.payout != null ? r2c(p.payout - p.wager) : null;
+    // a payout the slip didn't show (0 or missing) has no to-win to print, rather than a negative one
+    const toWin = p.wager != null && p.payout != null && p.payout > p.wager ? r2c(p.payout - p.wager) : null;
     const amt = sl.busted
       ? '<span class="gp-samt gp-lostamt">' + money(p.wager) + '</span>'
       : '<span class="gp-samt">' + money(p.wager) + (toWin != null ? ' <span class="gp-tw">to win</span> <span class="gp-win">' + money(toWin) + '</span>' : '') + '</span>';
@@ -948,7 +951,7 @@
   /* ---------------- updates ----------------
      A home-screen app can keep running yesterday's files for a long time. BUILD must equal the ?v= tag on the scripts in index.html;
      when the live index.html carries a different tag, the page reloads itself once to pick up the new version. */
-  const BUILD = '20261123a';
+  const BUILD = '20261123b';
   let lastUpdateCheck = 0;
   async function checkForUpdate() {
     if (Date.now() - lastUpdateCheck < 60000 || !/^https?:/.test(location.protocol)) return;
