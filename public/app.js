@@ -309,9 +309,16 @@
   }
 
   function buildParlay(bet, thumb) {
-    const wager = num(bet.wager);
+    let wager = num(bet.wager);
     let payout = num(bet.payout);
     const toWin = num(bet.to_win);
+    // a settled straight shows only "+$50" (what it won): the stake comes from the printed odds (-105 → risked $52.50)
+    let wagerIn = wager;
+    if (wagerIn == null && toWin != null) {
+      const o = String(bet.total_odds || (bet.legs && bet.legs.length === 1 && bet.legs[0].odds) || '').replace('\u2212', '-').match(/^\s*([+-])\s*(\d{3,5})\s*$/);
+      if (o) wagerIn = Math.round((o[1] === '+' ? toWin * 100 / +o[2] : toWin * +o[2] / 100) * 100) / 100;
+    }
+    wager = wagerIn;
     if (payout == null && wager != null && toWin != null) payout = Math.round((wager + toWin) * 100) / 100;
     // Ticket rows print "risk" and "to win" side by side; when the reader files the to-win figure as the payout, the printed odds give it away:
     // $54 at +115 shown as $54 / $63 is 54 risk, 63 to win (payout 117), not a 54-to-return-63 bet at -600.
@@ -744,7 +751,7 @@
       const tiles = [].concat.apply([], imgs.map(function (i) { return i.tiles; }));
       if (tiles.length > 12) throw new Error('That screenshot is extremely long (' + tiles.length + ' slices). Upload it in two or three smaller pieces.');
       renderPending();
-      const j = await api('/api/parse', { method: 'POST', body: JSON.stringify({ images: tiles, note: entry.note || '' }) });
+      const j = await api('/api/parse', { method: 'POST', body: JSON.stringify({ images: tiles, note: entry.note || '', straights: !!entry.straights }) });
       const bets = (j.bets && j.bets.length ? j.bets : [j.bet || {}]).map(function (b) { return buildParlay(b, entry.thumb); }).filter(function (p) { return p.legs.length; });
       if (!bets.length) throw new Error('No bets found in that image. Try a clearer or fuller screenshot.');
       // Never load a slip whose lines didn't come through (it would show 0s and "clear" everything). The same screenshot usually reads
@@ -764,6 +771,7 @@
         bets.forEach(function (p) { p.note = entry.note; });
         const box = $('#slipNote'); if (box && box.value.trim() === entry.note) box.value = '';   // used up; a new note goes with the next slip
       }
+      if (entry.straights) setStraights(false);   // like the note, it goes with one upload; the next screenshot is read normally
       bets.reverse().forEach(function (p) { S.parlays.unshift(p); });
       save(); renderPending(); render(); refreshAll();
       const warn = [].concat.apply([], bets.map(function (p) { return (p.warnings || []).filter(usefulWarning); }));
@@ -776,6 +784,13 @@
     }
   }
 
+  /* "Straight bets": tells the reader every row of the next screenshot is its own single bet. */
+  function setStraights(on) {
+    const b = $('#straightBtn'); if (!b) return;
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    b.textContent = on ? 'Straight bets ✓' : 'Straight bets';
+  }
+
   function handleFiles(list) {
     const files = Array.prototype.slice.call(list || []).filter(function (f) { return /^image\//.test(f.type) || /\.(png|jpe?g|webp|gif|heic|heif)$/i.test(f.name); });
     if (!files.length) { toast('That doesn’t look like an image.'); return; }
@@ -783,7 +798,8 @@
     const groups = combine ? [files] : files.map(function (f) { return [f]; });
     groups.forEach(function (g) {
       const noteBox = $('#slipNote');
-      const entry = { id: uid(), files: g, thumb: null, error: null, note: noteBox ? noteBox.value.trim().slice(0, 300) : '' };
+      const straightBtn = $('#straightBtn');
+      const entry = { id: uid(), files: g, thumb: null, error: null, note: noteBox ? noteBox.value.trim().slice(0, 300) : '', straights: !!(straightBtn && straightBtn.getAttribute('aria-pressed') === 'true') };
       S.pending.unshift(entry);
       processGroup(entry);
     });
@@ -952,7 +968,7 @@
   /* ---------------- updates ----------------
      A home-screen app can keep running yesterday's files for a long time. BUILD must equal the ?v= tag on the scripts in index.html;
      when the live index.html carries a different tag, the page reloads itself once to pick up the new version. */
-  const BUILD = '20261123c';
+  const BUILD = '20261123d';
   let lastUpdateCheck = 0;
   async function checkForUpdate() {
     if (Date.now() - lastUpdateCheck < 60000 || !/^https?:/.test(location.protocol)) return;
@@ -992,6 +1008,8 @@
     if (choosePhoto) choosePhoto.addEventListener('click', function () { file.click(); });
     $('#combineWrap').hidden = false;
     $('#combineWrap').addEventListener('click', function (e) { e.stopPropagation(); });
+    const sb = $('#straightBtn');
+    if (sb) sb.addEventListener('click', function (e) { e.stopPropagation(); setStraights(sb.getAttribute('aria-pressed') !== 'true'); });
     file.addEventListener('change', function () { handleFiles(file.files); file.value = ''; });
     ['dragenter', 'dragover'].forEach(function (ev) { window.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add('over'); }); });
     ['dragleave', 'drop'].forEach(function (ev) { window.addEventListener(ev, function (e) { e.preventDefault(); if (ev === 'drop' || e.target === document.documentElement || !e.relatedTarget) drop.classList.remove('over'); }); });

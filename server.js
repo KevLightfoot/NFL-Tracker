@@ -515,9 +515,34 @@ function legsMissingLine(bet) {
 /* The bettor's own note about a slip ("Seattle is college basketball vs Hawaii"): plain text, one paragraph, 300 characters at most. */
 function cleanNote(n) { return String(n == null ? '' : n).replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300); }
 
-async function parseSlip(images, userKey, userNote) {
+const STRAIGHTS_NOTE = 'STRAIGHT BETS: the bettor says every row / selection in this screenshot is its OWN single (straight) bet, not legs of a parlay. ' +
+  'Return each row as a separate bet: the first in the top-level fields, every other one in additional_bets. Each bet: bet_type single, exactly ONE leg, ' +
+  'and that row\'s own money (its wager/risk, and its payout or to_win). Put the row\'s odds (e.g. -105) in that bet\'s total_odds and on its leg. ' +
+  'Settled rows that show only a result: "+$50" in green = it WON $50 profit (to_win 50, wager null, slip_status won); "-$52" in red = it LOST, the stake was $52 (wager 52, payout null, slip_status lost). ' +
+  'Fractions like "-2½" are -2.5.';
+
+/* With "Straight bets" on, a parlay that still came back is split: one single per leg (the money per row was not read, so it is left for the bettor). */
+function splitStraights(bet) {
+  const all = [bet].concat(Array.isArray(bet.additional_bets) ? bet.additional_bets : []);
+  const out = [];
+  all.forEach(function (b) {
+    const legs = (b && b.legs) || [];
+    if (legs.length <= 1) { out.push(Object.assign({}, b, { bet_type: 'single' })); return; }
+    legs.forEach(function (l) {
+      out.push({ sportsbook: b.sportsbook || null, bet_type: 'single', wager: null, payout: null, to_win: null, total_odds: l.odds || null, slip_status: null,
+        warnings: ['Straight bet split from one read; enter its wager and payout.'], legs: [l] });
+    });
+  });
+  const first = out.shift() || bet;
+  first.additional_bets = out;
+  return first;
+}
+
+async function parseSlip(images, userKey, userNote, straights) {
   userNote = cleanNote(userNote);
-  const first = await callModel(images, userKey, '', userNote);
+  const extraFirst = straights ? STRAIGHTS_NOTE : '';
+  const first0 = await callModel(images, userKey, extraFirst, userNote);
+  const first = straights ? splitStraights(first0) : first0;
   const missing = legsMissingLine(first);
   if (!missing.length) return first;
   // One more look, pointing at exactly what was missed: the line is the single most important number on a leg.
@@ -525,7 +550,8 @@ async function parseSlip(images, userKey, userNote) {
   const note = 'Your previous answer left the line empty on these legs: ' + missing.map(function (l) { return (l.player || l.team || l.raw_text || 'leg') + (l.stat ? ' ' + l.stat : ''); }).join('; ') +
     '. Look at the screenshot again. Every leg prints its number: on DraftKings Predictions it is the big heading of the leg ("30+", "2+", "1+"), above the game and the "Player Stat" line, and "N+" means line N-0.5 with side over. Return the complete slip again with every line filled in.';
   try {
-    const second = await callModel(images, userKey, note, userNote);
+    const second0 = await callModel(images, userKey, (extraFirst ? extraFirst + ' ' : '') + note, userNote);
+    const second = straights ? splitStraights(second0) : second0;
     if (legsMissingLine(second).length < missing.length) { log('parse_retry_better', { before: missing.length, after: legsMissingLine(second).length }); return second; }
   } catch (e) { log('parse_retry_failed', { error: String(e.message || e).slice(0, 200) }); }
   return first;
@@ -660,14 +686,15 @@ async function handleApi(req, res, url) {
     const t0 = Date.now();
     let bet;
     const note = cleanNote(body.note);
-    try { bet = await parseSlip(images, req.headers['x-api-key'], note); }
+    const straights = body.straights === true;
+    try { bet = await parseSlip(images, req.headers['x-api-key'], note, straights); }
     catch (e) { log('parse_error', { ms: Date.now() - t0, images: images.length, error: String(e.message || e).slice(0, 300) }); throw e; }
     const extra = Array.isArray(bet.additional_bets) ? bet.additional_bets : [];
     const allBets = [bet].concat(extra);
     allBets.forEach(function (b) {
       const legs = (b && b.legs) || [];
       const noLine = legs.filter(function (l) { return ['spread', 'total', 'team_total', 'player_prop'].indexOf(l.market) >= 0 && l.side !== 'yes' && (l.line == null || l.line === 0) && l.market !== 'spread'; }).length;
-      log(noLine ? 'parse_missing_lines' : 'parse', { ms: Date.now() - t0, images: images.length, legs: legs.length, noLine: noLine, wager: b && b.wager, payout: b && b.payout, odds: b && b.total_odds, warnings: (b && b.warnings || []).slice(0, 4), legsDetail: legs.map(legBrief) });
+      log(noLine ? 'parse_missing_lines' : 'parse', { ms: Date.now() - t0, images: images.length, straights: straights, legs: legs.length, noLine: noLine, wager: b && b.wager, payout: b && b.payout, odds: b && b.total_odds, warnings: (b && b.warnings || []).slice(0, 4), legsDetail: legs.map(legBrief) });
     });
     delete bet.additional_bets;
     const bets = [bet].concat(extra.filter(function (b) { return b && Array.isArray(b.legs) && b.legs.length; }));
@@ -717,4 +744,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { notifier: notifier, server: server, resolveLeg: resolveLeg, resolveSlip: resolveSlip, pickGame: pickGame, parseSlip: parseSlip, TOOL: TOOL };
+module.exports = { splitStraights: splitStraights, notifier: notifier, server: server, resolveLeg: resolveLeg, resolveSlip: resolveSlip, pickGame: pickGame, parseSlip: parseSlip, TOOL: TOOL };

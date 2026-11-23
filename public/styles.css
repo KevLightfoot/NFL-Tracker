@@ -311,3 +311,8 @@ label.chk small { color: var(--muted); font-size: 12px; }
 .gp-tag.t-live { background: #3a2a0c; color: #fbbf24; }
 .gp-tag.me { border-color: #c7d0dd; color: #fff; font-weight: 700; }
 .gp-lhead .gp-lprog { display: block; margin-left: 0; margin-top: 1px; }
+
+/* "Straight bets" toggle above the upload button */
+.slip-mode { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0 2px; font-size: 13px; color: var(--muted); }
+.mode-toggle { flex: none; min-height: 40px; padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-weight: 600; font-size: 14px; cursor: pointer; }
+.mode-toggle[aria-pressed="true"] { border-color: #f59e0b; background: #3a2a0c; color: #fbbf24; }
