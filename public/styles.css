@@ -239,6 +239,18 @@ code { background: #0e1520; padding: 1px 5px; border-radius: 5px; font-size: 12p
 .gp-total b { font-size: 17px; font-variant-numeric: tabular-nums; }
 .gp-total b.win { color: #4ade80; }
 .gp-total small { display: block; color: var(--muted); font-size: 11px; }
+.gp-total { padding: 10px; }
+.gp-tcell { display: block; min-width: 0; text-align: left; padding: 6px 8px; border-radius: 10px; border: 1px solid var(--line); background: #152033; color: inherit; font: inherit; cursor: pointer; }
+.gp-tcell:active { background: #1a2a42; }
+.gp-tcell.sel { border-color: var(--blue); background: #13263a; }
+.gp-tcell.static { border-color: transparent; background: none; cursor: default; }
+.gp-tcell label { cursor: inherit; }
+.gp-thint { display: block; margin-top: 2px; font-size: 11px; font-weight: 600; color: var(--blue); }
+.gp-open { border-top: 1px solid var(--line); background: #101826; padding: 12px 0 6px; }
+.gp-open .gp-gtot { padding-top: 0; }
+.gp-osort { display: block; margin-top: 2px; font-size: 11px; font-weight: 600; letter-spacing: 0; color: var(--blue); }
+.gp-oslips { padding: 0 14px 8px; }
+.gp-oslips .gp-slip:first-child { margin-top: 0; }
 label.chk { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; font-size: 14px; }
 label.chk input { width: auto; flex: none; }
 label.chk small { color: var(--muted); font-size: 12px; }

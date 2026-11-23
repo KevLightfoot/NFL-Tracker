@@ -47,7 +47,7 @@ test('the app wires credit slips, auto odds, and the games panel with totals', f
   assert.ok(/applyOdds\(p\)/.test(src) && /oddsUser/.test(src), 'odds are derived unless you typed your own');
   assert.ok(/<label>RISK<\/label>/.test(src) && /<label>TO WIN<\/label>/.test(src), 'credit slips show risk / to win');
   assert.ok(/data-gp-game/.test(src) && /gamesExpanded/.test(src) && /gameLegs\(/.test(src), 'each game expands to its markets');
-  assert.ok(/gamesTotals\(slips\)/.test(src) && /TOTAL RISK/.test(src), 'totals sit at the bottom of the games tab');
+  assert.ok(/gamesTotals\(slips/.test(src) && /data-gp-open/.test(src) && /openBetsHTML\(info\)/.test(src) && /TOTAL RISK/.test(src), 'totals sit at the bottom of the games tab');
   assert.ok(!/gp-chips">' \+ r\.slips/.test(src), 'bet chips no longer sit under every game');
 });
 

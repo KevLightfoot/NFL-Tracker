@@ -9,7 +9,7 @@
   const LS_COLLAPSED = 'parlay-tracker.collapsed.v1', LS_BETS = 'parlay-tracker.v1', LS_KEY = 'parlay-tracker.apiKey';
   // GitHub Pages frontend talks to the Render API. Keep this URL public; never put API keys here.
   const API_BASE = 'https://nfl-parlay-tracker.onrender.com';
-  const S = { parlays: [], games: {}, gamesList: [], expanded: new Set(), collapsed: new Set(), gamesOpen: false, gamesExpanded: new Set(), pending: [], config: {}, timer: null, demoTimer: null, lastUpdate: null, busy: false, again: false, fetchError: null, serverDown: false };
+  const S = { parlays: [], games: {}, gamesList: [], expanded: new Set(), collapsed: new Set(), gamesOpen: false, gamesExpanded: new Set(), openBets: null, pending: [], config: {}, timer: null, demoTimer: null, lastUpdate: null, busy: false, again: false, fetchError: null, serverDown: false };
 
   /* ---------------- storage ---------------- */
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -524,7 +524,7 @@
         }
         return '<div class="gp-row' + (isOpen ? ' open' : '') + '"><button type="button" class="gp-main" data-gp-game="' + esc(gid) + '" aria-expanded="' + isOpen + '"><span class="gp-teams">' + esc(g.away.abbr) + (pre ? '' : ' <b>' + esc(g.away.score) + '</b>') + ' @ ' + esc(g.home.abbr) + (pre ? '' : ' <b>' + esc(g.home.score) + '</b>') + '</span>' +
           '<span class="gp-right"><span class="gp-count">' + legs.length + ' bet' + (legs.length === 1 ? '' : 's') + '</span><span class="gp-status' + (g.state === 'in' ? ' live' : '') + '">' + esc(E.gameStatusText(g)) + '</span><span class="chev' + (isOpen ? '' : ' down') + '" aria-hidden="true"></span></span></button>' + sitHtml(g) + legHtml + '</div>';
-      }).join('') + gamesTotals(slips) + '</div>';
+      }).join('') + gamesTotals(slips, info) + openBetsHTML(info) + '</div>';
   }
 
   /* Live football tracker for a game row: who has the ball, down & distance, and a little field with the ball and first-down line. */
@@ -547,19 +547,42 @@
       (t.last ? '<div class="gp-last">' + esc(t.last) + '</div>' : '') + '</div>';
   }
 
-  /* Total risk and total to win across every slip in the panel (credit and cash alike). */
-  function gamesTotals(slips) {
+  /* Total risk and total to win across every slip in the panel (credit and cash alike). Risk counts every stake;
+     to win counts only slips that can still pay (a busted slip can't win anything). Both open the Open bets list. */
+  function gamesTotals(slips, info) {
     let risk = 0, win = 0, counted = 0;
-    slips.forEach(function (p) {
+    slips.forEach(function (p, i) {
       if (p.wager == null) return;
       risk += p.wager; counted++;
-      if (p.payout != null) win += p.payout - p.wager;
+      if (p.payout != null && p.payout > p.wager && !(info && info[i] && info[i].busted)) win += p.payout - p.wager;
     });
     if (!counted) return '';
     const credit = slips.reduce(function (n, p) { return n + (p.credit && p.wager != null ? p.wager : 0); }, 0);
-    return '<div class="gp-total"><div><label>TOTAL RISK</label><b>' + money(Math.round(risk * 100) / 100) + '</b>' + (credit ? '<small>incl. ' + money(Math.round(credit * 100) / 100) + ' credit</small>' : '') + '</div>' +
-      '<div><label>TO WIN</label><b class="win">' + money(Math.round(win * 100) / 100) + '</b></div>' +
-      '<div><label>SLIPS</label><b>' + counted + '</b></div></div>';
+    const cell = function (mode, label, value, cls, extra) {
+      const on = S.openBets === mode;
+      return '<button type="button" class="gp-tcell' + (on ? ' sel' : '') + '" data-gp-open="' + mode + '" aria-expanded="' + on + '"><label>' + label + '</label><b' + (cls ? ' class="' + cls + '"' : '') + '>' + value + '</b>' + (extra || '') +
+        '<span class="gp-thint">' + (on ? 'Hide' : 'View bets') + ' ›</span></button>';
+    };
+    return '<div class="gp-total">' +
+      cell('risk', 'TOTAL RISK', money(Math.round(risk * 100) / 100), '', credit ? '<small>incl. ' + money(Math.round(credit * 100) / 100) + ' credit</small>' : '') +
+      cell('win', 'TO WIN', money(Math.round(win * 100) / 100), 'win') +
+      '<div class="gp-tcell static"><label>SLIPS</label><b>' + counted + '</b></div></div>';
+  }
+
+  /* Every open slip, the same way a slip shows under a game: stake, to win and each leg as a colored tag.
+     Opened from TOTAL RISK (biggest stake first) or TO WIN (biggest payout first); busted slips sink to the bottom. */
+  function openBetsHTML(info) {
+    const mode = S.openBets;
+    if (mode !== 'risk' && mode !== 'win') return '';
+    const tw = function (x) { const p = x.p; return p.wager != null && p.payout != null && p.payout > p.wager ? p.payout - p.wager : 0; };
+    const key = mode === 'risk' ? function (x) { return x.p.wager || 0; } : tw;
+    const alive = info.filter(function (x) { return !x.busted; }).sort(function (a, b) { return key(b) - key(a); });
+    const dead = info.filter(function (x) { return x.busted; }).sort(function (a, b) { return (b.p.wager || 0) - (a.p.wager || 0); });
+    const all = alive.concat(dead), st = stakeOf(all);
+    return '<div class="gp-open"><div class="gp-gtot"><span class="gp-glabel">OPEN BETS · ' + all.length + ' SLIP' + (all.length === 1 ? '' : 'S') +
+      '<span class="gp-osort">Sorted by ' + (mode === 'risk' ? 'stake' : 'to win') + '</span></span>' +
+      '<span class="gp-gnum"><b>' + money(st.total) + '</b>' + splitHTML(st) + '</span></div>' +
+      '<div class="gp-oslips">' + all.map(function (x) { return slipHTML(x, null); }).join('') + '</div></div>';
   }
 
   function render() {
@@ -968,7 +991,7 @@
   /* ---------------- updates ----------------
      A home-screen app can keep running yesterday's files for a long time. BUILD must equal the ?v= tag on the scripts in index.html;
      when the live index.html carries a different tag, the page reloads itself once to pick up the new version. */
-  const BUILD = '20261123d';
+  const BUILD = '20261123e';
   let lastUpdateCheck = 0;
   async function checkForUpdate() {
     if (Date.now() - lastUpdateCheck < 60000 || !/^https?:/.test(location.protocol)) return;
@@ -1034,6 +1057,8 @@
       if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('leg')) { e.preventDefault(); toggleLeg(e.target.dataset.leg); }
     });
     $('#gamesPanel').addEventListener('click', function (e) {
+      const ob = e.target.closest('[data-gp-open]');
+      if (ob) { const m = ob.dataset.gpOpen; S.openBets = S.openBets === m ? null : m; renderGames(); return; }
       const row = e.target.closest('[data-gp-game]');
       if (row) { const id = row.dataset.gpGame; if (S.gamesExpanded.has(id)) S.gamesExpanded.delete(id); else S.gamesExpanded.add(id); renderGames(); return; }
       if (!e.target.closest('[data-gp="toggle"]')) return;
