@@ -233,8 +233,7 @@ code { background: #0e1520; padding: 1px 5px; border-radius: 5px; font-size: 12p
 .gp-leg.st-hit > i { color: #4ade80; } .gp-leg.st-miss > i { color: #f87171; } .gp-leg.st-live > i { color: #fbbf24; }
 .gp-ltitle { font-weight: 600; font-size: 14.5px; }
 .gp-lprog { margin-left: 8px; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
-.gp-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-.gp-chip { font-size: 11.5px; padding: 3px 9px; border-radius: 999px; background: #223048; color: #9db0cc; }
+.gp-ltxt { min-width: 0; }
 .gp-total { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 12px 14px; border-top: 1px solid var(--line); background: #101826; }
 .gp-total label { display: block; font-size: 10.5px; letter-spacing: .6px; color: var(--muted); font-weight: 700; }
 .gp-total b { font-size: 17px; font-variant-numeric: tabular-nums; }
@@ -286,3 +285,29 @@ label.chk small { color: var(--muted); font-size: 12px; }
 .slip-note textarea:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(56, 189, 248, .18); }
 .slip-note small { display: block; margin-top: 5px; color: var(--muted); font-size: 11.5px; }
 .p-note { margin-top: 8px; font-size: 12px; color: var(--muted); font-style: italic; overflow-wrap: anywhere; }
+
+/* All games: per leg, its total stake (in play / lost) and every slip it is in, with all of that slip's legs as tags */
+.gp-gtot { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; padding: 2px 14px 10px; }
+.gp-glabel { font-size: 10.5px; letter-spacing: .6px; font-weight: 700; color: var(--muted); padding-top: 4px; }
+.gp-gnum { text-align: right; }
+.gp-gnum b { display: block; font-size: 17px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.gp-lhead { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.gp-lstake { text-align: right; flex: none; }
+.gp-lstake b { display: block; font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.gp-split { display: block; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.gp-play { color: #4ade80; } .gp-lost { color: #f87171; } .gp-dot { color: var(--muted); }
+.gp-slip { padding: 10px 0 2px; border-top: 1px solid #1c2940; margin-top: 8px; }
+.gp-slip + .gp-slip { margin-top: 0; }
+.gp-slip.busted { opacity: .6; }
+.gp-shead { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 13px; }
+.gp-samt { flex: none; font-variant-numeric: tabular-nums; }
+.gp-tw { color: var(--muted); } .gp-win { color: #4ade80; }
+.gp-bust { color: #f87171; font-weight: 600; }
+.gp-lostamt { color: #f87171; text-decoration: line-through; }
+.gp-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.gp-tag { font-size: 11.5px; line-height: 1.35; padding: 2px 7px; border-radius: 6px; background: #1a2535; color: #9db0cc; border: 1px solid transparent; }
+.gp-tag.t-hit { background: #12301f; color: #4ade80; }
+.gp-tag.t-miss { background: #3a1518; color: #f87171; }
+.gp-tag.t-live { background: #3a2a0c; color: #fbbf24; }
+.gp-tag.me { border-color: #c7d0dd; color: #fff; font-weight: 700; }
+.gp-lhead .gp-lprog { display: block; margin-left: 0; margin-top: 1px; }

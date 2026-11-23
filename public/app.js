@@ -422,21 +422,52 @@
   // Each game is a row; open it to see every market on that game once, with the bets it is part of.
   const MARKET_ORDER = { moneyline: 0, spread: 1, total: 2, team_total: 3 };
   const GLYPH = { hit: '✓', miss: '✕', push: '–', void: '∅', unresolved: '?', live: '●', pending: '○' };
-  function gameLegs(gameId, slips, names) {
+  // A leg key: the same bet on the same game in two slips is one row here.
+  const legKey = function (r, l) { return r.title + '|' + (l.period || 'full'); };
+  function gameLegs(gameId, slips) {
     const byKey = {};
-    slips.forEach(function (p, pi) {
-      p.legs.forEach(function (l) {
+    slips.forEach(function (sl, si) {
+      sl.p.legs.forEach(function (l, li) {
         if (l.gameId !== gameId) return;
-        const r = E.evaluateLeg(l, S.games[gameId] || null);
-        const key = r.title + '|' + (l.period || 'full');
-        const e = byKey[key] = byKey[key] || { r: r, market: l.market, bets: [] };
-        if (e.bets.indexOf(pi) < 0) e.bets.push(pi);
+        const r = sl.results[li], key = legKey(r, l);
+        const e = byKey[key] = byKey[key] || { key: key, r: r, market: l.market, slips: [] };
+        if (e.slips.indexOf(si) < 0) e.slips.push(si);
       });
     });
     return Object.keys(byKey).map(function (k) { return byKey[k]; }).sort(function (x, y) {
       const a = MARKET_ORDER[x.market] == null ? 9 : MARKET_ORDER[x.market], b = MARKET_ORDER[y.market] == null ? 9 : MARKET_ORDER[y.market];
       return a - b || (x.r.title < y.r.title ? -1 : 1);
-    }).map(function (e) { e.names = e.bets.map(function (pi) { return names[pi]; }); return e; });
+    });
+  }
+  const r2c = function (n) { return Math.round(n * 100) / 100; };
+  /* What a set of slips puts on something: everything staked, split into still in play and already lost (a slip with a missed leg). */
+  function stakeOf(list) {
+    let total = 0, play = 0, lost = 0, nPlay = 0, nLost = 0;
+    list.forEach(function (sl) {
+      const w = sl.p.wager;
+      if (sl.busted) nLost++; else nPlay++;
+      if (w == null) return;
+      total += w; if (sl.busted) lost += w; else play += w;
+    });
+    return { total: r2c(total), play: r2c(play), lost: r2c(lost), nPlay: nPlay, nLost: nLost };
+  }
+  function splitHTML(st) {
+    return '<span class="gp-split"><span class="gp-play">' + money(st.play) + ' in play</span>' + (st.nLost ? ' <span class="gp-dot">·</span> <span class="gp-lost">' + money(st.lost) + ' lost</span>' : '') + '</span>';
+  }
+  /* One slip under a leg: its size, what it risked and can win, and every one of its legs as a tag colored by how that leg is doing. */
+  function slipHTML(sl, key) {
+    const p = sl.p, n = p.legs.length;
+    const size = n === 1 ? 'Single' : n + '-leg ' + (BET_LABEL[p.betType] && p.betType !== 'single' ? BET_LABEL[p.betType] : 'Parlay').toLowerCase();
+    const toWin = p.wager != null && p.payout != null ? r2c(p.payout - p.wager) : null;
+    const amt = sl.busted
+      ? '<span class="gp-samt gp-lostamt">' + money(p.wager) + '</span>'
+      : '<span class="gp-samt">' + money(p.wager) + (toWin != null ? ' <span class="gp-tw">to win</span> <span class="gp-win">' + money(toWin) + '</span>' : '') + '</span>';
+    const tags = p.legs.map(function (l, li) {
+      const r = sl.results[li], st = ['hit', 'miss', 'live', 'push'].indexOf(r.state) >= 0 ? r.state : 'pending';
+      const me = l.gameId && legKey(r, l) === key && l.gameId === sl.gameId;
+      return '<span class="gp-tag t-' + st + (me ? ' me' : '') + '">' + esc(sl.short[li]) + '</span>';
+    }).join('');
+    return '<div class="gp-slip' + (sl.busted ? ' busted' : '') + '"><div class="gp-shead"><b>' + esc(size) + (sl.busted ? ' <span class="gp-bust">· busted</span>' : '') + '</b>' + amt + '</div><div class="gp-tags">' + tags + '</div></div>';
   }
 
   function renderGames() {
@@ -454,21 +485,32 @@
     // Shown whenever any slip has a game placed (one slip too: it still has the live field view and the totals).
     if (!slips.length || !rows.length) { el.hidden = true; el.innerHTML = ''; return; }
     rows.sort(function (a, b) { const x = Date.parse(a.g.date), y = Date.parse(b.g.date); return (isNaN(x) ? Infinity : x) - (isNaN(y) ? Infinity : y); });
-    const labels = slips.map(function (p) { return p.name || (p.legs.length + '-Leg ' + (BET_LABEL[p.betType] || 'Parlay')); });
-    const seen = {};
-    const names = labels.map(function (n) { const dup = labels.filter(function (x) { return x === n; }).length > 1; seen[n] = (seen[n] || 0) + 1; return dup ? n + ' #' + seen[n] : n; });
+    // every slip graded once: its legs' states, short labels and whether it is already busted
+    const info = slips.map(function (p) {
+      const results = p.legs.map(function (l) { return E.evaluateLeg(l, l.gameId ? S.games[l.gameId] || null : null); });
+      return { p: p, results: results, busted: E.summarize(results).status === 'lost', short: p.legs.map(function (l) { return E.autoName([l], S.games).text || l.raw_text || 'Leg'; }) };
+    });
     const open = !!S.gamesOpen;
     el.hidden = false;
     el.innerHTML = '<button class="gp-head" type="button" aria-expanded="' + open + '" data-gp="toggle"><span><b>All games</b><small>' + rows.length + ' game' + (rows.length === 1 ? '' : 's') + ' across ' + slips.length + ' slip' + (slips.length === 1 ? '' : 's') + '</small></span><span class="chev' + (open ? '' : ' down') + '" aria-hidden="true"></span></button>' +
       '<div class="gp-body"' + (open ? '' : ' hidden') + '>' + rows.map(function (r) {
         const g = r.g, pre = g.state === 'pre', gid = g.id, isOpen = S.gamesExpanded.has(gid);
-        const legs = gameLegs(gid, slips, names);
-        const legHtml = !isOpen ? '' : '<ul class="gp-legs">' + legs.map(function (e) {
-          const rr = e.r, prog = rr.kind === 'bar' || rr.kind === 'total' ? (rr.valueText != null && rr.targetText != null ? rr.valueText + ' / ' + rr.targetText + (rr.unit ? ' ' + rr.unit : '') : '') : (rr.scoreText || '');
-          return '<li class="gp-leg st-' + esc(rr.state) + '"><i aria-hidden="true">' + (GLYPH[rr.state] || '○') + '</i><div class="gp-ltxt"><span class="gp-ltitle">' + esc(rr.title) + '</span>' +
-            (prog ? '<span class="gp-lprog">' + esc(prog) + '</span>' : '') +
-            '<div class="gp-chips">' + e.names.map(function (n) { return '<span class="gp-chip">' + esc(n) + '</span>'; }).join('') + '</div></div></li>';
-        }).join('') + '</ul>';
+        const legs = gameLegs(gid, info);
+        let legHtml = '';
+        if (isOpen) {
+          const gst = stakeOf(r.slips.map(function (pi) { return info[pi]; }));
+          legHtml = '<div class="gp-gtot"><span class="gp-glabel">ON THIS GAME</span><span class="gp-gnum"><b>' + money(gst.total) + '</b>' + splitHTML(gst) + '</span></div>' +
+            '<ul class="gp-legs">' + legs.map(function (e) {
+              const rr = e.r, prog = rr.kind === 'bar' || rr.kind === 'total' ? (rr.valueText != null && rr.targetText != null ? rr.valueText + ' / ' + rr.targetText + (rr.unit ? ' ' + rr.unit : '') : '') : (rr.scoreText || '');
+              const mine = e.slips.map(function (si) { return Object.assign({ gameId: gid }, info[si]); });
+              const order = mine.filter(function (x) { return !x.busted; }).concat(mine.filter(function (x) { return x.busted; }));   // busted slips sink to the bottom
+              const st = stakeOf(mine);
+              return '<li class="gp-leg st-' + esc(rr.state) + '"><i aria-hidden="true">' + (GLYPH[rr.state] || '○') + '</i><div class="gp-ltxt">' +
+                '<div class="gp-lhead"><div><span class="gp-ltitle">' + esc(rr.title) + '</span>' + (prog ? '<span class="gp-lprog">' + esc(prog) + '</span>' : '') + '</div>' +
+                '<div class="gp-lstake"><b>' + money(st.total) + '</b>' + splitHTML(st) + '</div></div>' +
+                order.map(function (sl) { return slipHTML(sl, e.key); }).join('') + '</div></li>';
+            }).join('') + '</ul>';
+        }
         return '<div class="gp-row' + (isOpen ? ' open' : '') + '"><button type="button" class="gp-main" data-gp-game="' + esc(gid) + '" aria-expanded="' + isOpen + '"><span class="gp-teams">' + esc(g.away.abbr) + (pre ? '' : ' <b>' + esc(g.away.score) + '</b>') + ' @ ' + esc(g.home.abbr) + (pre ? '' : ' <b>' + esc(g.home.score) + '</b>') + '</span>' +
           '<span class="gp-right"><span class="gp-count">' + legs.length + ' bet' + (legs.length === 1 ? '' : 's') + '</span><span class="gp-status' + (g.state === 'in' ? ' live' : '') + '">' + esc(E.gameStatusText(g)) + '</span><span class="chev' + (isOpen ? '' : ' down') + '" aria-hidden="true"></span></span></button>' + sitHtml(g) + legHtml + '</div>';
       }).join('') + gamesTotals(slips) + '</div>';
@@ -906,7 +948,7 @@
   /* ---------------- updates ----------------
      A home-screen app can keep running yesterday's files for a long time. BUILD must equal the ?v= tag on the scripts in index.html;
      when the live index.html carries a different tag, the page reloads itself once to pick up the new version. */
-  const BUILD = '20261103d';
+  const BUILD = '20261123a';
   let lastUpdateCheck = 0;
   async function checkForUpdate() {
     if (Date.now() - lastUpdateCheck < 60000 || !/^https?:/.test(location.protocol)) return;
